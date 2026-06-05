@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 小说转剧本工具 | 七牛云实训营</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- highlight.js for YAML syntax highlighting -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
+    <!-- js-yaml for YAML ↔ JSON conversion -->
+    <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
+    <!-- Chart.js for statistics chart -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #1e1e2f; }
+        ::-webkit-scrollbar-thumb { background: #52525b; border-radius: 3px; }
+        body { background: #0f0f1a; }
+        .highlight pre { margin: 0; border-radius: 0.5rem; }
+    </style>
+</head>
+<body class="text-gray-200">
+    <div class="max-w-7xl mx-auto px-4 py-8">
+        <div class="text-center mb-10">
+            <h1 class="text-4xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">📖 AI 小说转剧本工具</h1>
+            <p class="text-gray-400 mt-2">上传3章以上小说，一键生成专业剧本（YAML）</p>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- 左侧：输入区 -->
+            <div class="bg-gray-900/60 backdrop-blur-sm rounded-2xl p-6 border border-gray-800 shadow-xl">
+                <div class="mb-6">
+                    <label class="block text-sm font-medium mb-2">🎭 剧本风格</label>
+                    <select id="styleSelect" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-purple-500">
+                        <option value="realistic">写实风格（贴近生活，对白自然）</option>
+                        <option value="suspense">悬疑风格（氛围紧张，留白丰富）</option>
+                        <option value="literary">文艺风格（诗意台词，意象化）</option>
+                    </select>
+                </div>
+                <div class="mb-6">
+                    <label class="block text-sm font-medium mb-2">📄 上传小说文件（.txt）</label>
+                    <div id="dropZone" class="border-2 border-dashed border-gray-700 rounded-xl p-8 text-center hover:border-purple-500 transition cursor-pointer">
+                        <input type="file" id="fileInput" accept=".txt" class="hidden" />
+                        <div class="flex flex-col items-center gap-2">
+                            <svg class="w-10 h-10 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+                            <p class="text-gray-400">点击或拖拽上传 .txt 文件</p>
+                            <p class="text-xs text-gray-600">要求至少3个章节</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="mb-6">
+                    <label class="block text-sm font-medium mb-2">✏️ 或直接粘贴小说内容</label>
+                    <textarea id="novelText" rows="10" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2 font-mono text-sm" placeholder="在此粘贴小说内容（至少包含3个章节）..."></textarea>
+                </div>
+                <button id="convertBtn" class="w-full bg-purple-600 hover:bg-purple-700 transition py-3 rounded-xl font-semibold text-lg shadow-lg flex items-center justify-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    开始转换剧本
+                </button>
+            </div>
+            <!-- 右侧：输出区 -->
+            <div class="bg-gray-900/60 backdrop-blur-sm rounded-2xl p-6 border border-gray-800 shadow-xl">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-semibold flex items-center gap-2">
+                        <span>📝 生成的剧本</span>
+                        <span id="statusBadge" class="text-xs bg-gray-700 px-2 py-1 rounded-full">未开始</span>
+                    </h2>
+                    <div class="flex gap-2">
+                        <button id="copyBtn" disabled class="px-3 py-1 bg-gray-700 rounded-lg text-sm disabled:opacity-50">📋 复制</button>
+                        <button id="exportYamlBtn" disabled class="px-3 py-1 bg-gray-700 rounded-lg text-sm disabled:opacity-50">💾 导出YAML</button>
+                        <button id="exportJsonBtn" disabled class="px-3 py-1 bg-gray-700 rounded-lg text-sm disabled:opacity-50">📄 导出JSON</button>
+                    </div>
+                </div>
+                <div class="bg-gray-950 rounded-xl overflow-auto max-h-[400px] border border-gray-800">
+                    <pre id="yamlOutput" class="p-4 text-sm font-mono"><code class="language-yaml">等待转换...</code></pre>
+                </div>
+                <div id="statsPanel" class="mt-6 hidden">
+                    <h3 class="text-md font-medium mb-3">📊 角色对话统计</h3>
+                    <canvas id="statsChart" width="400" height="200" class="w-full h-48"></canvas>
+                    <div id="statsText" class="text-xs text-gray-400 mt-2 text-center"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
