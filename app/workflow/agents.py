@@ -12,7 +12,7 @@ def get_llm(model="qwen-plus", temperature=0.3):
     return ChatOpenAI(
         model=model,
         temperature=temperature,
-        max_tokens=4096,
+        max_tokens=16384,   # 增大到 16384，防止长文本输出截断
         api_key=os.getenv("DASHSCOPE_API_KEY"),
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
     )
@@ -67,7 +67,7 @@ def script_generation_agent(state: dict, llm) -> dict:
 
 {style_instruction}
 
-小说：{state["raw_text"][:6000]}
+小说：{state["raw_text"][:3000]}   # 减少输入长度，避免输出过长
 角色库（已提取）：
 {json.dumps(state["extracted_characters"], ensure_ascii=False, indent=2)}
 场景框架（已规划）：

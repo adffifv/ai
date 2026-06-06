@@ -4,17 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI 小说转剧本工具 | 七牛云实训营</title>
-    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- highlight.js -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
-    <!-- js-yaml -->
     <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
-    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <!-- vis-network for relation graph -->
     <script src="https://unpkg.com/vis-network@9.1.2/dist/vis-network.min.js"></script>
     <style>
         ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -22,7 +17,6 @@
         ::-webkit-scrollbar-thumb { background: #52525b; border-radius: 3px; }
         body { background: #0f0f1a; }
         .highlight pre { margin: 0; border-radius: 0.5rem; }
-        .transition-all { transition: all 0.2s ease; }
         #network { height: 400px; width: 100%; background: #0f0f1a; border-radius: 0.5rem; }
     </style>
 </head>
@@ -35,6 +29,7 @@
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <!-- 左侧输入区 -->
             <div class="bg-gray-900/60 backdrop-blur-sm rounded-2xl p-6 border border-gray-800 shadow-xl">
+                <!-- 剧本风格 -->
                 <div class="mb-6">
                     <label class="block text-sm font-medium mb-2">🎭 剧本风格</label>
                     <select id="styleSelect" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-purple-500">
@@ -43,6 +38,53 @@
                         <option value="literary">文艺风格（诗意台词，意象化）</option>
                     </select>
                 </div>
+
+                <!-- 处理模式选择（突出显示） -->
+                <div class="mb-8 p-4 bg-purple-900/20 border border-purple-500 rounded-xl shadow-inner">
+                    <div class="flex items-center gap-2 mb-3">
+                        <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                        <span class="font-semibold text-purple-300">处理模式（重要）</span>
+                    </div>
+                    <div class="flex flex-wrap gap-6">
+                        <label class="inline-flex items-center cursor-pointer">
+                            <input type="radio" name="mode" value="short" checked class="form-radio text-purple-600 w-4 h-4">
+                            <span class="ml-2 text-sm">
+                                <span class="font-medium">短文本模式</span>
+                                <span class="text-gray-400 text-xs block">适合 ≤10000 字的小说，一次性生成，速度快</span>
+                            </span>
+                        </label>
+                        <label class="inline-flex items-center cursor-pointer">
+                            <input type="radio" name="mode" value="long" class="form-radio text-purple-600 w-4 h-4">
+                            <span class="ml-2 text-sm">
+                                <span class="font-medium">长文本模式</span>
+                                <span class="text-gray-400 text-xs block">适合 >10000 字的长篇小说，自动分段处理并合并</span>
+                            </span>
+                        </label>
+                    </div>
+                    <!-- 当前实际模式指示器 -->
+                    <div id="activeModeIndicator" class="mt-3 p-2 bg-gray-800 rounded-lg text-sm flex items-center gap-2">
+                        <span class="text-gray-400">⚙️ 当前将使用：</span>
+                        <span id="activeModeText" class="font-bold text-purple-300">短文本模式</span>
+                        <span id="activeModeReason" class="text-xs text-gray-500"></span>
+                    </div>
+                    <div class="text-xs text-gray-400 mt-3 flex items-center gap-1">
+                        <span>💡</span> 根据文本统计中的中文字符数，系统会自动推荐模式，你也可以手动切换。
+                    </div>
+                </div>
+
+                <!-- 字数统计 -->
+                <div class="mb-6">
+                    <label class="block text-sm font-medium mb-2">📊 文本统计</label>
+                    <div class="bg-gray-800 rounded-xl px-4 py-2">
+                        <span id="charCount" class="text-purple-300 font-mono">0</span>
+                        <span class="text-gray-400"> 字符（不含空格）</span>
+                        <span id="wordCount" class="ml-4 text-purple-300 font-mono">0</span>
+                        <span class="text-gray-400"> 中文字符数</span>
+                    </div>
+                    <div id="modeHint" class="text-xs mt-2"></div>
+                </div>
+
+                <!-- 文件上传 -->
                 <div class="mb-6">
                     <label class="block text-sm font-medium mb-2">📄 上传小说文件（.txt）</label>
                     <div id="dropZone" class="border-2 border-dashed border-gray-700 rounded-xl p-8 text-center hover:border-purple-500 transition cursor-pointer">
@@ -67,7 +109,7 @@
                 </button>
             </div>
 
-            <!-- 右侧输出区 -->
+            <!-- 右侧输出区（保持不变） -->
             <div class="bg-gray-900/60 backdrop-blur-sm rounded-2xl p-6 border border-gray-800 shadow-xl">
                 <div class="flex justify-between items-center mb-4 flex-wrap">
                     <div class="flex gap-2 flex-wrap">
@@ -85,31 +127,24 @@
                     </div>
                 </div>
 
-                <!-- 场景容器 -->
                 <div id="scenesContainer" class="bg-gray-950 rounded-xl overflow-auto max-h-[400px] border border-gray-800 hidden"></div>
-                <!-- 角色容器 -->
                 <div id="charactersContainer" class="bg-gray-950 rounded-xl overflow-auto max-h-[400px] border border-gray-800 hidden"></div>
-                <!-- YAML 容器 -->
                 <div id="yamlContainer" class="bg-gray-950 rounded-xl overflow-auto max-h-[400px] border border-gray-800">
                     <pre id="yamlOutput" class="p-4 text-sm font-mono"><code class="language-yaml">等待转换...</code></pre>
                 </div>
-                <!-- 关系图容器 -->
                 <div id="relationContainer" class="bg-gray-950 rounded-xl overflow-auto max-h-[400px] border border-gray-800 hidden">
                     <div id="network"></div>
                 </div>
-                <!-- 剧本解析容器 -->
                 <div id="analysisContainer" class="bg-gray-950 rounded-xl overflow-auto max-h-[400px] border border-gray-800 hidden p-4">
                     <div id="analysisContent" class="text-sm space-y-3"></div>
                 </div>
 
-                <!-- 统计图表 -->
                 <div id="statsPanel" class="mt-6 hidden">
                     <h3 class="text-md font-medium mb-3">📊 角色对话统计</h3>
                     <canvas id="statsChart" width="400" height="200" class="w-full h-48"></canvas>
                     <div id="statsText" class="text-xs text-gray-400 mt-2 text-center"></div>
                 </div>
 
-                <!-- AI 问答窗口 -->
                 <div class="mt-6 bg-gray-800 rounded-xl p-4">
                     <h3 class="text-md font-medium mb-2">🤖 剧本助手</h3>
                     <div id="chatHistory" class="h-32 overflow-y-auto text-sm text-gray-300 mb-2 border border-gray-700 rounded-lg p-2"></div>

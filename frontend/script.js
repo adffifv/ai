@@ -14,7 +14,6 @@ const styleSelect = document.getElementById('styleSelect');
 const loadingIcon = document.getElementById('loadingIcon');
 const convertText = document.getElementById('convertText');
 
-// 选项卡元素
 const tabScenesBtn = document.getElementById('tabScenesBtn');
 const tabCharactersBtn = document.getElementById('tabCharactersBtn');
 const tabYamlBtn = document.getElementById('tabYamlBtn');
@@ -27,7 +26,6 @@ const relationContainer = document.getElementById('relationContainer');
 const analysisContainer = document.getElementById('analysisContainer');
 const analysisContent = document.getElementById('analysisContent');
 
-// AI 聊天元素
 const chatInput = document.getElementById('chatInput');
 const sendChatBtn = document.getElementById('sendChatBtn');
 const chatHistory = document.getElementById('chatHistory');
@@ -37,6 +35,13 @@ let statsChart = null;
 let network = null;
 let relationData = null;
 let progressInterval = null;
+
+const modeRadios = document.querySelectorAll('input[name="mode"]');
+const charCountSpan = document.getElementById('charCount');
+const wordCountSpan = document.getElementById('wordCount');
+const modeHint = document.getElementById('modeHint');
+const activeModeText = document.getElementById('activeModeText');
+const activeModeReason = document.getElementById('activeModeReason');
 
 // ========== 辅助函数 ==========
 function getCharacterName(scriptData, charId) {
@@ -57,10 +62,7 @@ function escapeHtml(str) {
 }
 
 function setStatus(text, isError = false) {
-    if (!statusBadge) {
-        console.warn('statusBadge not found');
-        return;
-    }
+    if (!statusBadge) return;
     statusBadge.innerText = text;
     statusBadge.className = `text-xs px-2 py-1 rounded-full ${isError ? 'bg-red-600' : 'bg-purple-600'}`;
 }
@@ -71,10 +73,14 @@ function setLoading(isLoading) {
         convertBtn.disabled = true;
         loadingIcon.classList.remove('hidden');
         convertText.innerText = '转换中...';
+        if (styleSelect) styleSelect.disabled = true;
+        modeRadios.forEach(radio => radio.disabled = true);
     } else {
         convertBtn.disabled = false;
         loadingIcon.classList.add('hidden');
         convertText.innerText = '开始转换剧本';
+        if (styleSelect) styleSelect.disabled = false;
+        modeRadios.forEach(radio => radio.disabled = false);
     }
 }
 
@@ -208,7 +214,7 @@ function drawNetwork(data) {
             smooth: { type: 'cubicBezier' },
             width: 1,
             color: { color: '#8888ff', highlight: '#ff8888' },
-            font: { align: 'middle', size: 12, color: '#ffcc88', strokeWidth: 0 }  // 显示关系标签
+            font: { align: 'middle', size: 12, color: '#ffcc88', strokeWidth: 0 }
         },
         physics: {
             stabilization: true,
@@ -217,8 +223,6 @@ function drawNetwork(data) {
         interaction: { hover: true, tooltipDelay: 200 }
     };
     network = new vis.Network(container, { nodes, edges }, options);
-
-    // 添加点击事件：显示节点或边的详情
     network.on('click', function(params) {
         if (params.nodes.length > 0) {
             const nodeId = params.nodes[0];
@@ -230,7 +234,7 @@ function drawNetwork(data) {
             const edgeId = params.edges[0];
             const edge = data.edges.find(e => e.id === edgeId);
             if (edge) {
-                alert(`关系: ${edge.label || '未知'}\n${edge.title}`);
+                alert(`关系: 共同出场 ${edge.value} 次\n${edge.title}`);
             }
         }
     });
@@ -325,7 +329,55 @@ async function sendQuestion() {
     }
 }
 
-// ========== 转换主函数（带进度模拟和锁定风格下拉框） ==========
+// ========== 模式与字数统计 ==========
+function getActualMode() {
+    const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || 'short';
+    const text = novelText.value.trim();
+    const chineseChars = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+    const isLong = (selectedMode === 'long' || chineseChars >= 10000);
+    let reason = '';
+    if (selectedMode === 'long') {
+        reason = '用户手动选择长文本模式';
+    } else if (chineseChars >= 10000) {
+        reason = '文本超过1万字，自动切换为长文本模式';
+    } else {
+        reason = '文本不足1万字，使用短文本模式';
+    }
+    return { mode: isLong ? 'long' : 'short', reason };
+}
+
+function updateModeIndicator() {
+    const actual = getActualMode();
+    const modeText = actual.mode === 'long' ? '长文本模式 (分段处理)' : '短文本模式 (一次性生成)';
+    activeModeText.innerText = modeText;
+    activeModeReason.innerText = actual.reason;
+}
+
+function updateCharCount(text) {
+    const totalChars = text.length;
+    const chineseChars = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+    charCountSpan.innerText = totalChars;
+    wordCountSpan.innerText = chineseChars;
+    const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || 'short';
+    const isLong = chineseChars >= 10000;
+    if (selectedMode === 'short' && isLong) {
+        modeHint.innerHTML = '<span class="text-yellow-400">⚠️ 当前文本超过1万字，建议切换到“长文本模式”以获得更好的处理效果。</span>';
+    } else if (selectedMode === 'long' && !isLong) {
+        modeHint.innerHTML = '<span class="text-blue-400">💡 文本较短，使用“短文本模式”速度更快。</span>';
+    } else {
+        modeHint.innerHTML = '';
+    }
+    updateModeIndicator();
+}
+
+novelText.addEventListener('input', (e) => updateCharCount(e.target.value));
+modeRadios.forEach(radio => {
+    radio.addEventListener('change', () => {
+        if (novelText.value.trim()) updateCharCount(novelText.value);
+    });
+});
+
+// ========== 转换主函数 ==========
 const progressSteps = [
     "📖 正在解析小说章节...",
     "👥 正在提取角色信息...",
@@ -337,9 +389,6 @@ const progressSteps = [
 async function convertNovel(text, title, style) {
     setLoading(true);
     setStatus('转换中...');
-    // 锁定风格下拉框
-    if (styleSelect) styleSelect.disabled = true;
-    // 启动模拟进度
     let stepIndex = 0;
     progressInterval = setInterval(() => {
         if (stepIndex < progressSteps.length) {
@@ -349,9 +398,10 @@ async function convertNovel(text, title, style) {
             setStatus(progressSteps[progressSteps.length - 1]);
         }
     }, 3000);
-
     try {
-        const response = await fetch('/api/convert', {
+        const actual = getActualMode();
+        const apiUrl = actual.mode === 'long' ? '/api/convert/long' : '/api/convert';
+        const response = await fetch(apiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: text, title: title, style: style })
@@ -379,12 +429,9 @@ async function convertNovel(text, title, style) {
         if (charactersContainer) charactersContainer.innerHTML = '<div class="p-4 text-red-400">转换失败，无法显示角色信息</div>';
     } finally {
         setLoading(false);
-        // 恢复风格下拉框
-        if (styleSelect) styleSelect.disabled = false;
     }
 }
 
-// ========== 文件处理 ==========
 function readFile(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -401,6 +448,7 @@ async function onFileSelected(file) {
     }
     const content = await readFile(file);
     novelText.value = content;
+    updateCharCount(content);
     const title = file.name.replace(/\.txt$/, '');
     await convertNovel(content, title, styleSelect.value);
 }
@@ -478,16 +526,10 @@ if (exportAllBtn) {
     });
 }
 
-if (sendChatBtn) {
-    sendChatBtn.addEventListener('click', sendQuestion);
-}
-if (chatInput) {
-    chatInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') sendQuestion();
-    });
-}
+if (sendChatBtn) sendChatBtn.addEventListener('click', sendQuestion);
+if (chatInput) chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendQuestion(); });
 
-// 选项卡切换
+// ========== 选项卡切换 ==========
 function updateTabActive(activeBtn) {
     const btns = [tabScenesBtn, tabCharactersBtn, tabYamlBtn, tabRelationBtn, tabAnalysisBtn];
     btns.forEach(btn => {
@@ -500,43 +542,44 @@ function updateTabActive(activeBtn) {
         activeBtn.classList.remove('border-transparent');
     }
 }
+
 if (tabScenesBtn) {
     tabScenesBtn.addEventListener('click', () => {
-        if (scenesContainer) scenesContainer.classList.remove('hidden');
-        if (charactersContainer) charactersContainer.classList.add('hidden');
-        if (yamlContainer) yamlContainer.classList.add('hidden');
-        if (relationContainer) relationContainer.classList.add('hidden');
-        if (analysisContainer) analysisContainer.classList.add('hidden');
+        scenesContainer.classList.remove('hidden');
+        charactersContainer.classList.add('hidden');
+        yamlContainer.classList.add('hidden');
+        relationContainer.classList.add('hidden');
+        analysisContainer.classList.add('hidden');
         updateTabActive(tabScenesBtn);
     });
 }
 if (tabCharactersBtn) {
     tabCharactersBtn.addEventListener('click', () => {
-        if (scenesContainer) scenesContainer.classList.add('hidden');
-        if (charactersContainer) charactersContainer.classList.remove('hidden');
-        if (yamlContainer) yamlContainer.classList.add('hidden');
-        if (relationContainer) relationContainer.classList.add('hidden');
-        if (analysisContainer) analysisContainer.classList.add('hidden');
+        scenesContainer.classList.add('hidden');
+        charactersContainer.classList.remove('hidden');
+        yamlContainer.classList.add('hidden');
+        relationContainer.classList.add('hidden');
+        analysisContainer.classList.add('hidden');
         updateTabActive(tabCharactersBtn);
     });
 }
 if (tabYamlBtn) {
     tabYamlBtn.addEventListener('click', () => {
-        if (scenesContainer) scenesContainer.classList.add('hidden');
-        if (charactersContainer) charactersContainer.classList.add('hidden');
-        if (yamlContainer) yamlContainer.classList.remove('hidden');
-        if (relationContainer) relationContainer.classList.add('hidden');
-        if (analysisContainer) analysisContainer.classList.add('hidden');
+        scenesContainer.classList.add('hidden');
+        charactersContainer.classList.add('hidden');
+        yamlContainer.classList.remove('hidden');
+        relationContainer.classList.add('hidden');
+        analysisContainer.classList.add('hidden');
         updateTabActive(tabYamlBtn);
     });
 }
 if (tabRelationBtn) {
     tabRelationBtn.addEventListener('click', () => {
-        if (scenesContainer) scenesContainer.classList.add('hidden');
-        if (charactersContainer) charactersContainer.classList.add('hidden');
-        if (yamlContainer) yamlContainer.classList.add('hidden');
-        if (relationContainer) relationContainer.classList.remove('hidden');
-        if (analysisContainer) analysisContainer.classList.add('hidden');
+        scenesContainer.classList.add('hidden');
+        charactersContainer.classList.add('hidden');
+        yamlContainer.classList.add('hidden');
+        relationContainer.classList.remove('hidden');
+        analysisContainer.classList.add('hidden');
         updateTabActive(tabRelationBtn);
         if (network && relationData) {
             setTimeout(() => network.redraw(), 100);
@@ -545,20 +588,19 @@ if (tabRelationBtn) {
 }
 if (tabAnalysisBtn) {
     tabAnalysisBtn.addEventListener('click', () => {
-        if (scenesContainer) scenesContainer.classList.add('hidden');
-        if (charactersContainer) charactersContainer.classList.add('hidden');
-        if (yamlContainer) yamlContainer.classList.add('hidden');
-        if (relationContainer) relationContainer.classList.add('hidden');
-        if (analysisContainer) analysisContainer.classList.remove('hidden');
+        scenesContainer.classList.add('hidden');
+        charactersContainer.classList.add('hidden');
+        yamlContainer.classList.add('hidden');
+        relationContainer.classList.add('hidden');
+        analysisContainer.classList.remove('hidden');
         updateTabActive(tabAnalysisBtn);
     });
 }
 
-// 初始化 hljs
+// 初始化
 hljs.highlightAll();
-// 默认显示 YAML 容器
-if (yamlContainer) yamlContainer.classList.remove('hidden');
-if (scenesContainer) scenesContainer.classList.add('hidden');
-if (charactersContainer) charactersContainer.classList.add('hidden');
-if (relationContainer) relationContainer.classList.add('hidden');
-if (analysisContainer) analysisContainer.classList.add('hidden');
+yamlContainer.classList.remove('hidden');
+scenesContainer.classList.add('hidden');
+charactersContainer.classList.add('hidden');
+relationContainer.classList.add('hidden');
+analysisContainer.classList.add('hidden');
