@@ -3,6 +3,8 @@ import json
 from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 import os
+import yaml
+from datetime import datetime
 
 load_dotenv()
 
@@ -23,47 +25,36 @@ def parse_json_response(content: str) -> dict:
         content = content.split("```")[1].split("```")[0]
     return json.loads(content)
 
-def chapter_parser_agent(state: dict, llm) -> dict:
-    prompt = f"""你是小说章节解析专家。分析以下文本，按章节切分，输出JSON。
+def fast_parser_agent(state: dict, llm_fast) -> dict:
+    prompt = f"""你是一个专业的小说分析专家。请分析以下小说，输出一个完整的 JSON 对象。
+
 小说原文：
 {state["raw_text"][:8000]}
 
 输出格式：
-{{"chapters": [{{"title": "...", "summary": "...", "characters_appeared": [...], "key_conflict": "...", "emotional_tone": "..."}}], "total_chapters": 3}}
-"""
-    resp = llm.invoke(prompt)
-    parsed = parse_json_response(resp.content)
-    state["parsed_chapters"] = parsed["chapters"]
-    state["total_chapters"] = parsed["total_chapters"]
-    return state
+{{
+  "chapters": [
+    {{"title": "第1章 相遇", "summary": "简短摘要", "characters_appeared": ["张三"], "key_conflict": "矛盾点", "emotional_tone": "氛围"}}
+  ],
+  "characters": [
+    {{"id": "char_001", "name": "张三", "role_type": "protagonist", "personality": "...", "appearance": "...", "background": "...", "first_appearance": "第1章"}}
+  ],
+  "scenes": [
+    {{"scene_id": "S001", "title": "深夜咖啡馆", "setting": {{"location": "...", "time_of_day": "night", "atmosphere": "..."}}, "characters": ["char_001"], "emotional_arc": "..."}}
+  ]
+}}
 
-def character_extractor_agent(state: dict, llm) -> dict:
-    chapters = state["parsed_chapters"]
-    prompt = f"""从章节摘要提取角色，按出场顺序输出JSON数组。
-章节摘要：{json.dumps(chapters, ensure_ascii=False, indent=2)}
-格式：[{{"id": "char_001", "name": "张三", "role_type": "protagonist", "personality": "...", "appearance": "...", "background": "...", "first_appearance": "..."}}]
+注意：不要输出任何额外解释，只输出 JSON。
 """
-    resp = llm.invoke(prompt)
-    characters = parse_json_response(resp.content)
-    state["extracted_characters"] = characters
-    return state
-
-def scene_planner_agent(state: dict, llm) -> dict:
-    chapters = state["parsed_chapters"]
-    prompt = f"""将小说章节拆分为影视场景，每章2-5个场景。输出JSON。
-章节信息：{json.dumps(chapters, ensure_ascii=False, indent=2)}
-格式：{{"scenes": [{{"scene_id": "S001", "title": "...", "setting": {{"location": "...", "time_of_day": "night", "atmosphere": "..."}}, "characters": ["char_001"], "estimated_lines": 0, "emotional_arc": "..."}}]}}
-"""
-    resp = llm.invoke(prompt)
-    scenes = parse_json_response(resp.content)
-    state["planned_scenes"] = scenes["scenes"]
+    resp = llm_fast.invoke(prompt)
+    data = parse_json_response(resp.content)
+    state["parsed_chapters"] = data.get("chapters", [])
+    state["total_chapters"] = len(state["parsed_chapters"])
+    state["extracted_characters"] = data.get("characters", [])
+    state["planned_scenes"] = data.get("scenes", [])
     return state
 
 def script_generation_agent(state: dict, llm) -> dict:
-    from datetime import datetime
-    import yaml
-    import re
-
     style = state.get("style", "realistic")
     style_prompts = {
         "realistic": "【风格要求】采用写实风格，对白自然生活化，动作描写细腻真实，符合日常逻辑。",
@@ -76,9 +67,11 @@ def script_generation_agent(state: dict, llm) -> dict:
 
 {style_instruction}
 
-小说：{state["raw_text"][:4000]}  # 缩短到4000字符
-角色：{json.dumps(state["extracted_characters"], ensure_ascii=False)}
-场景框架：{json.dumps(state["planned_scenes"], ensure_ascii=False)}
+小说：{state["raw_text"][:6000]}
+角色库（已提取）：
+{json.dumps(state["extracted_characters"], ensure_ascii=False, indent=2)}
+场景框架（已规划）：
+{json.dumps(state["planned_scenes"], ensure_ascii=False, indent=2)}
 
 请确保输出完整的 YAML，不要中途截断，所有字符串必须闭合。
 
@@ -118,3 +111,8 @@ summary:
         raise
     state["final_script"] = final_script
     return state
+
+# 兼容旧代码
+def chapter_parser_agent(state, llm): pass
+def character_extractor_agent(state, llm): pass
+def scene_planner_agent(state, llm): pass

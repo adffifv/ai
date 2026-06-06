@@ -6,20 +6,24 @@
     <title>AI 小说转剧本工具 | 七牛云实训营</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- highlight.js for YAML syntax highlighting -->
+    <!-- highlight.js -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
-    <!-- js-yaml for YAML ↔ JSON conversion -->
+    <!-- js-yaml -->
     <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
-    <!-- Chart.js for statistics chart -->
+    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- vis-network for relation graph -->
+    <script src="https://unpkg.com/vis-network@9.1.2/dist/vis-network.min.js"></script>
     <style>
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #1e1e2f; }
         ::-webkit-scrollbar-thumb { background: #52525b; border-radius: 3px; }
         body { background: #0f0f1a; }
         .highlight pre { margin: 0; border-radius: 0.5rem; }
+        .transition-all { transition: all 0.2s ease; }
+        #network { height: 400px; width: 100%; background: #0f0f1a; border-radius: 0.5rem; }
     </style>
 </head>
 <body class="text-gray-200">
@@ -29,7 +33,7 @@
             <p class="text-gray-400 mt-2">上传3章以上小说，一键生成专业剧本（YAML）</p>
         </div>
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <!-- 左侧：输入区 -->
+            <!-- 左侧输入区 -->
             <div class="bg-gray-900/60 backdrop-blur-sm rounded-2xl p-6 border border-gray-800 shadow-xl">
                 <div class="mb-6">
                     <label class="block text-sm font-medium mb-2">🎭 剧本风格</label>
@@ -55,34 +59,68 @@
                     <textarea id="novelText" rows="10" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2 font-mono text-sm" placeholder="在此粘贴小说内容（至少包含3个章节）..."></textarea>
                 </div>
                 <button id="convertBtn" class="w-full bg-purple-600 hover:bg-purple-700 transition py-3 rounded-xl font-semibold text-lg shadow-lg flex items-center justify-center gap-2">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                    开始转换剧本
+                    <svg id="loadingIcon" class="hidden animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span id="convertText">开始转换剧本</span>
                 </button>
             </div>
-            <!-- 右侧：输出区 -->
+
+            <!-- 右侧输出区 -->
             <div class="bg-gray-900/60 backdrop-blur-sm rounded-2xl p-6 border border-gray-800 shadow-xl">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-xl font-semibold flex items-center gap-2">
-                        <span>📝 生成的剧本</span>
-                        <span id="statusBadge" class="text-xs bg-gray-700 px-2 py-1 rounded-full">未开始</span>
-                    </h2>
-                    <div class="flex gap-2">
+                <div class="flex justify-between items-center mb-4 flex-wrap">
+                    <div class="flex gap-2 flex-wrap">
+                        <button id="tabScenesBtn" class="px-3 py-1 text-sm border-b-2 border-transparent hover:text-purple-400 transition">🎬 场景信息</button>
+                        <button id="tabCharactersBtn" class="px-3 py-1 text-sm border-b-2 border-transparent hover:text-purple-400 transition">👥 角色信息</button>
+                        <button id="tabYamlBtn" class="px-3 py-1 text-sm border-b-2 border-purple-400 text-purple-400">📄 YAML 原始</button>
+                        <button id="tabRelationBtn" class="px-3 py-1 text-sm border-b-2 border-transparent hover:text-purple-400 transition">🔗 角色关系</button>
+                        <button id="tabAnalysisBtn" class="px-3 py-1 text-sm border-b-2 border-transparent hover:text-purple-400 transition">📊 剧本解析</button>
+                    </div>
+                    <div class="flex gap-2 mt-2 sm:mt-0">
                         <button id="copyBtn" disabled class="px-3 py-1 bg-gray-700 rounded-lg text-sm disabled:opacity-50">📋 复制</button>
                         <button id="exportYamlBtn" disabled class="px-3 py-1 bg-gray-700 rounded-lg text-sm disabled:opacity-50">💾 导出YAML</button>
                         <button id="exportJsonBtn" disabled class="px-3 py-1 bg-gray-700 rounded-lg text-sm disabled:opacity-50">📄 导出JSON</button>
+                        <button id="exportAllBtn" disabled class="px-3 py-1 bg-gray-700 rounded-lg text-sm disabled:opacity-50">📦 打包下载</button>
                     </div>
                 </div>
-                <div class="bg-gray-950 rounded-xl overflow-auto max-h-[400px] border border-gray-800">
+
+                <!-- 场景容器 -->
+                <div id="scenesContainer" class="bg-gray-950 rounded-xl overflow-auto max-h-[400px] border border-gray-800 hidden"></div>
+                <!-- 角色容器 -->
+                <div id="charactersContainer" class="bg-gray-950 rounded-xl overflow-auto max-h-[400px] border border-gray-800 hidden"></div>
+                <!-- YAML 容器 -->
+                <div id="yamlContainer" class="bg-gray-950 rounded-xl overflow-auto max-h-[400px] border border-gray-800">
                     <pre id="yamlOutput" class="p-4 text-sm font-mono"><code class="language-yaml">等待转换...</code></pre>
                 </div>
+                <!-- 关系图容器 -->
+                <div id="relationContainer" class="bg-gray-950 rounded-xl overflow-auto max-h-[400px] border border-gray-800 hidden">
+                    <div id="network"></div>
+                </div>
+                <!-- 剧本解析容器 -->
+                <div id="analysisContainer" class="bg-gray-950 rounded-xl overflow-auto max-h-[400px] border border-gray-800 hidden p-4">
+                    <div id="analysisContent" class="text-sm space-y-3"></div>
+                </div>
+
+                <!-- 统计图表 -->
                 <div id="statsPanel" class="mt-6 hidden">
                     <h3 class="text-md font-medium mb-3">📊 角色对话统计</h3>
                     <canvas id="statsChart" width="400" height="200" class="w-full h-48"></canvas>
                     <div id="statsText" class="text-xs text-gray-400 mt-2 text-center"></div>
                 </div>
+
+                <!-- AI 问答窗口 -->
+                <div class="mt-6 bg-gray-800 rounded-xl p-4">
+                    <h3 class="text-md font-medium mb-2">🤖 剧本助手</h3>
+                    <div id="chatHistory" class="h-32 overflow-y-auto text-sm text-gray-300 mb-2 border border-gray-700 rounded-lg p-2"></div>
+                    <div class="flex gap-2">
+                        <input type="text" id="chatInput" class="flex-1 bg-gray-700 rounded-lg px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-purple-500" placeholder="问一个关于剧本的问题..." disabled>
+                        <button id="sendChatBtn" class="bg-purple-600 px-3 py-1 rounded-lg text-sm disabled:opacity-50" disabled>发送</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
-    <script src="script.js"></script>
+    <script src="/static/script.js"></script>
 </body>
 </html>
