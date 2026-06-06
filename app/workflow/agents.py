@@ -10,7 +10,7 @@ def get_llm(model="qwen-plus", temperature=0.3):
     return ChatOpenAI(
         model=model,
         temperature=temperature,
-        max_tokens=4096,
+        max_tokens=8192,
         api_key=os.getenv("DASHSCOPE_API_KEY"),
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
     )
@@ -23,42 +23,37 @@ def parse_json_response(content: str) -> dict:
         content = content.split("```")[1].split("```")[0]
     return json.loads(content)
 
-def chapter_parser_agent(state: dict, llm) -> dict:
-    prompt = f"""你是小说章节解析专家。分析以下文本，按章节切分，输出JSON。
+# 新的快速解析 Agent：一次性输出章节、角色、场景框架
+def fast_parser_agent(state: dict, llm_fast) -> dict:
+    prompt = f"""你是一个专业的小说分析专家。请分析以下小说，输出一个完整的 JSON 对象。
+
 小说原文：
 {state["raw_text"][:8000]}
 
 输出格式：
-{{"chapters": [{{"title": "...", "summary": "...", "characters_appeared": [...], "key_conflict": "...", "emotional_tone": "..."}}], "total_chapters": 3}}
+{{
+  "chapters": [
+    {{"title": "第1章 相遇", "summary": "简短摘要", "characters_appeared": ["张三"], "key_conflict": "矛盾点", "emotional_tone": "氛围"}}
+  ],
+  "characters": [
+    {{"id": "char_001", "name": "张三", "role_type": "protagonist", "personality": "...", "appearance": "...", "background": "...", "first_appearance": "第1章"}}
+  ],
+  "scenes": [
+    {{"scene_id": "S001", "title": "深夜咖啡馆", "setting": {{"location": "...", "time_of_day": "night", "atmosphere": "..."}}, "characters": ["char_001"], "emotional_arc": "..."}}
+  ]
+}}
+
+注意：不要输出任何额外解释，只输出 JSON。
 """
-    resp = llm.invoke(prompt)
-    parsed = parse_json_response(resp.content)
-    state["parsed_chapters"] = parsed["chapters"]
-    state["total_chapters"] = parsed["total_chapters"]
+    resp = llm_fast.invoke(prompt)
+    data = parse_json_response(resp.content)
+    state["parsed_chapters"] = data.get("chapters", [])
+    state["total_chapters"] = len(state["parsed_chapters"])
+    state["extracted_characters"] = data.get("characters", [])
+    state["planned_scenes"] = data.get("scenes", [])
     return state
 
-def character_extractor_agent(state: dict, llm) -> dict:
-    chapters = state["parsed_chapters"]
-    prompt = f"""从章节摘要提取角色，按出场顺序输出JSON数组。
-章节摘要：{json.dumps(chapters, ensure_ascii=False, indent=2)}
-格式：[{{"id": "char_001", "name": "张三", "role_type": "protagonist", "personality": "...", "appearance": "...", "background": "...", "first_appearance": "..."}}]
-"""
-    resp = llm.invoke(prompt)
-    characters = parse_json_response(resp.content)
-    state["extracted_characters"] = characters
-    return state
-
-def scene_planner_agent(state: dict, llm) -> dict:
-    chapters = state["parsed_chapters"]
-    prompt = f"""将小说章节拆分为影视场景，每章2-5个场景。输出JSON。
-章节信息：{json.dumps(chapters, ensure_ascii=False, indent=2)}
-格式：{{"scenes": [{{"scene_id": "S001", "title": "...", "setting": {{"location": "...", "time_of_day": "night", "atmosphere": "..."}}, "characters": ["char_001"], "estimated_lines": 0, "emotional_arc": "..."}}]}}
-"""
-    resp = llm.invoke(prompt)
-    scenes = parse_json_response(resp.content)
-    state["planned_scenes"] = scenes["scenes"]
-    return state
-
+# 保留原有的 script_generation_agent 但稍作修改以适应风格参数和新的状态
 def script_generation_agent(state: dict, llm) -> dict:
     from datetime import datetime
     import yaml
@@ -76,9 +71,11 @@ def script_generation_agent(state: dict, llm) -> dict:
 
 {style_instruction}
 
-小说：{state["raw_text"][:4000]}  # 缩短到4000字符
-角色：{json.dumps(state["extracted_characters"], ensure_ascii=False)}
-场景框架：{json.dumps(state["planned_scenes"], ensure_ascii=False)}
+小说：{state["raw_text"][:6000]}
+角色库（已提取）：
+{json.dumps(state["extracted_characters"], ensure_ascii=False, indent=2)}
+场景框架（已规划）：
+{json.dumps(state["planned_scenes"], ensure_ascii=False, indent=2)}
 
 请确保输出完整的 YAML，不要中途截断，所有字符串必须闭合。
 
@@ -91,16 +88,35 @@ metadata:
   converted_scenes: {len(state["planned_scenes"])}
   created_at: "{datetime.now().isoformat()}"
   model_used: "{llm.model_name}"
-characters: ...
-scenes: ...
+characters:  # 这里直接使用上面提供的角色库，可适当丰富
+  - id: char_001
+    name: 张三
+    role_type: protagonist
+    personality: ...
+    appearance: ...
+    background: ...
+    first_appearance: S001
+scenes:  # 根据场景框架生成详细内容，每个场景需包含 script 数组（对话+动作）
+  - scene_id: S001
+    title: ...
+    setting:
+      location: ...
+      time_of_day: night
+      atmosphere: ...
+    characters: ["char_001"]
+    emotional_arc: ...
+    script:
+      - character: char_001
+        dialogue: "你好"
+        action: "推门而入"
 summary:
-  logline: "..."
+  logline: 一句话梗概
   structure:
-    inciting_incident: "..."
-    rising_action: "..."
-    climax: "..."
-    resolution: "..."
-  theme: "..."
+    inciting_incident: ...
+    rising_action: ...
+    climax: ...
+    resolution: ...
+  theme: ...
 """
     resp = llm.invoke(prompt)
     content = resp.content.strip()
@@ -118,3 +134,14 @@ summary:
         raise
     state["final_script"] = final_script
     return state
+
+# 为了兼容旧代码，保留原来的三个 Agent 函数（但不会被调用）
+def chapter_parser_agent(state: dict, llm) -> dict:
+    # 保留原函数，但实际不使用
+    pass
+
+def character_extractor_agent(state: dict, llm) -> dict:
+    pass
+
+def scene_planner_agent(state: dict, llm) -> dict:
+    pass
