@@ -207,7 +207,8 @@ function drawNetwork(data) {
         edges: {
             smooth: { type: 'cubicBezier' },
             width: 1,
-            color: { color: '#8888ff', highlight: '#ff8888' }
+            color: { color: '#8888ff', highlight: '#ff8888' },
+            font: { align: 'middle', size: 12, color: '#ffcc88', strokeWidth: 0 }  // 显示关系标签
         },
         physics: {
             stabilization: true,
@@ -216,6 +217,23 @@ function drawNetwork(data) {
         interaction: { hover: true, tooltipDelay: 200 }
     };
     network = new vis.Network(container, { nodes, edges }, options);
+
+    // 添加点击事件：显示节点或边的详情
+    network.on('click', function(params) {
+        if (params.nodes.length > 0) {
+            const nodeId = params.nodes[0];
+            const node = data.nodes.find(n => n.id === nodeId);
+            if (node) {
+                alert(`角色: ${node.label}\n出场次数: ${node.value}\n${node.title}`);
+            }
+        } else if (params.edges.length > 0) {
+            const edgeId = params.edges[0];
+            const edge = data.edges.find(e => e.id === edgeId);
+            if (edge) {
+                alert(`关系: ${edge.label || '未知'}\n${edge.title}`);
+            }
+        }
+    });
 }
 
 // ========== 剧本解析总结 ==========
@@ -307,7 +325,7 @@ async function sendQuestion() {
     }
 }
 
-// ========== 转换主函数（带模拟进度） ==========
+// ========== 转换主函数（带进度模拟和锁定风格下拉框） ==========
 const progressSteps = [
     "📖 正在解析小说章节...",
     "👥 正在提取角色信息...",
@@ -319,8 +337,9 @@ const progressSteps = [
 async function convertNovel(text, title, style) {
     setLoading(true);
     setStatus('转换中...');
-
-    // 启动模拟进度更新（每3秒切换一条状态）
+    // 锁定风格下拉框
+    if (styleSelect) styleSelect.disabled = true;
+    // 启动模拟进度
     let stepIndex = 0;
     progressInterval = setInterval(() => {
         if (stepIndex < progressSteps.length) {
@@ -360,6 +379,8 @@ async function convertNovel(text, title, style) {
         if (charactersContainer) charactersContainer.innerHTML = '<div class="p-4 text-red-400">转换失败，无法显示角色信息</div>';
     } finally {
         setLoading(false);
+        // 恢复风格下拉框
+        if (styleSelect) styleSelect.disabled = false;
     }
 }
 

@@ -90,13 +90,13 @@ async def chat(request: ChatRequest):
     response = llm.invoke(prompt)
     return {"answer": response.content}
 
-# ========== 角色关系分析 ==========
+# ========== 角色关系分析（无标签，仅共现权重） ==========
 @app.post("/api/analysis/relation")
 async def relation_analysis(script: dict):
-    from app.workflow.agents import get_llm
     scenes = script.get("scenes", [])
     characters = script.get("characters", [])
     char_id_to_name = {c["id"]: c["name"] for c in characters}
+    # 统计共现次数
     co_occurrence = defaultdict(Counter)
     for scene in scenes:
         scene_chars = scene.get("characters", [])
@@ -105,6 +105,7 @@ async def relation_analysis(script: dict):
                 if c1 != c2:
                     co_occurrence[c1][c2] += 1
                     co_occurrence[c2][c1] += 1
+    # 统计每个角色出场次数（用于节点大小）
     char_count = defaultdict(int)
     for scene in scenes:
         for cid in scene.get("characters", []):
@@ -117,33 +118,17 @@ async def relation_analysis(script: dict):
             "value": cnt,
             "title": f"{char_id_to_name.get(cid, cid)} (出场{cnt}次)"
         })
+    # 构建边（无标签，仅权重）
     edges = []
-    # 可选：调用 LLM 推断关系类型（耗时，可注释）
-    use_relation_label = False  # 若需要关系标签设为 True
-    if use_relation_label:
-        llm = get_llm(model="qwen-turbo", temperature=0.2)
-        script_summary = json.dumps(script.get("summary", {}), ensure_ascii=False)
     for c1, counters in co_occurrence.items():
         for c2, weight in counters.items():
             if c1 < c2:
-                edge = {
+                edges.append({
                     "from": c1,
                     "to": c2,
                     "value": weight,
                     "title": f"共同出场 {weight} 次"
-                }
-                if use_relation_label:
-                    # 调用 LLM 获取关系标签（示例，实际可缓存）
-                    name1 = char_id_to_name.get(c1, c1)
-                    name2 = char_id_to_name.get(c2, c2)
-                    prompt = f"""根据剧本，判断角色"{name1}"和"{name2}"之间的关系，只输出一个词（如：恋人、同事、朋友、敌对、母子）。剧本摘要：{script_summary[:500]}"""
-                    try:
-                        resp = llm.invoke(prompt)
-                        label = resp.content.strip().split('\n')[0][:10]
-                        edge["label"] = label
-                    except:
-                        pass
-                edges.append(edge)
+                })
     return {"nodes": nodes, "edges": edges}
 
 # ========== 剧本解析总结 ==========
