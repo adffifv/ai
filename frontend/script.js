@@ -13,6 +13,10 @@ const statsPanel = document.getElementById('statsPanel');
 const styleSelect = document.getElementById('styleSelect');
 const loadingIcon = document.getElementById('loadingIcon');
 const convertText = document.getElementById('convertText');
+const speedSelect = document.getElementById('speedSelect');
+const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+const scorePanel = document.getElementById('scorePanel');
+const scoreValue = document.getElementById('scoreValue');
 
 const tabScenesBtn = document.getElementById('tabScenesBtn');
 const tabCharactersBtn = document.getElementById('tabCharactersBtn');
@@ -74,12 +78,14 @@ function setLoading(isLoading) {
         loadingIcon.classList.remove('hidden');
         convertText.innerText = '转换中...';
         if (styleSelect) styleSelect.disabled = true;
+        if (speedSelect) speedSelect.disabled = true;
         modeRadios.forEach(radio => radio.disabled = true);
     } else {
         convertBtn.disabled = false;
         loadingIcon.classList.add('hidden');
         convertText.innerText = '开始转换剧本';
         if (styleSelect) styleSelect.disabled = false;
+        if (speedSelect) speedSelect.disabled = false;
         modeRadios.forEach(radio => radio.disabled = false);
     }
 }
@@ -91,7 +97,54 @@ function enableExportButtons() {
     if (exportAllBtn) exportAllBtn.disabled = false;
 }
 
-// ========== 渲染函数 ==========
+// ========== 自动保存与加载 ==========
+function saveToLocalStorage(scriptData) {
+    try {
+        localStorage.setItem('lastScript', JSON.stringify(scriptData));
+    } catch(e) { console.warn('保存失败', e); }
+}
+
+function loadFromLocalStorage() {
+    const saved = localStorage.getItem('lastScript');
+    if (saved) {
+        try {
+            const scriptData = JSON.parse(saved);
+            currentScriptData = scriptData;
+            displayYaml(scriptData);
+            renderScenes(scriptData);
+            renderCharacters(scriptData);
+            renderStats(scriptData);
+            enableExportButtons();
+            loadRelationGraph(scriptData);
+            loadScriptAnalysis(scriptData);
+            setStatus('已加载上次剧本');
+            if (chatInput) chatInput.disabled = false;
+            if (sendChatBtn) sendChatBtn.disabled = false;
+        } catch(e) { console.warn('加载失败', e); }
+    }
+}
+
+function clearLocalHistory() {
+    localStorage.removeItem('lastScript');
+    setStatus('历史已清除', false);
+    // 可选：清空界面
+    currentScriptData = null;
+    yamlOutput.innerHTML = '<code class="language-yaml">等待转换...</code>';
+    scenesContainer.innerHTML = '';
+    charactersContainer.innerHTML = '';
+    if (statsPanel) statsPanel.classList.add('hidden');
+    if (scorePanel) scorePanel.classList.add('hidden');
+    if (analysisContent) analysisContent.innerHTML = '';
+    if (relationContainer) relationContainer.innerHTML = '<div id="network"></div>';
+    if (chatInput) chatInput.disabled = true;
+    if (sendChatBtn) sendChatBtn.disabled = true;
+}
+
+if (clearHistoryBtn) {
+    clearHistoryBtn.addEventListener('click', clearLocalHistory);
+}
+
+// ========== 渲染函数（略，保持不变，但需确保它们存在） ==========
 function renderScenes(scriptData) {
     const scenes = scriptData.scenes || [];
     if (scenes.length === 0) {
@@ -240,7 +293,7 @@ function drawNetwork(data) {
     });
 }
 
-// ========== 剧本解析总结 ==========
+// ========== 剧本解析总结（含评分显示） ==========
 async function loadScriptAnalysis(scriptData) {
     if (!analysisContent) return;
     analysisContent.innerHTML = '<div class="text-gray-400">正在分析剧本...</div>';
@@ -253,6 +306,13 @@ async function loadScriptAnalysis(scriptData) {
         if (!response.ok) throw new Error('分析失败');
         const data = await response.json();
         renderAnalysis(data);
+        // 显示评分
+        if (data.score && scorePanel && scoreValue) {
+            scorePanel.classList.remove('hidden');
+            scoreValue.innerText = data.score;
+        } else {
+            if (scorePanel) scorePanel.classList.add('hidden');
+        }
     } catch (err) {
         analysisContent.innerHTML = `<div class="text-red-400">分析失败: ${err.message}</div>`;
     }
@@ -349,28 +409,28 @@ function getActualMode() {
 function updateModeIndicator() {
     const actual = getActualMode();
     const modeText = actual.mode === 'long' ? '长文本模式 (分段处理)' : '短文本模式 (一次性生成)';
-    activeModeText.innerText = modeText;
-    activeModeReason.innerText = actual.reason;
+    if (activeModeText) activeModeText.innerText = modeText;
+    if (activeModeReason) activeModeReason.innerText = actual.reason;
 }
 
 function updateCharCount(text) {
     const totalChars = text.length;
     const chineseChars = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
-    charCountSpan.innerText = totalChars;
-    wordCountSpan.innerText = chineseChars;
+    if (charCountSpan) charCountSpan.innerText = totalChars;
+    if (wordCountSpan) wordCountSpan.innerText = chineseChars;
     const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || 'short';
     const isLong = chineseChars >= 10000;
     if (selectedMode === 'short' && isLong) {
-        modeHint.innerHTML = '<span class="text-yellow-400">⚠️ 当前文本超过1万字，建议切换到“长文本模式”以获得更好的处理效果。</span>';
+        if (modeHint) modeHint.innerHTML = '<span class="text-yellow-400">⚠️ 当前文本超过1万字，建议切换到“长文本模式”以获得更好的处理效果。</span>';
     } else if (selectedMode === 'long' && !isLong) {
-        modeHint.innerHTML = '<span class="text-blue-400">💡 文本较短，使用“短文本模式”速度更快。</span>';
+        if (modeHint) modeHint.innerHTML = '<span class="text-blue-400">💡 文本较短，使用“短文本模式”速度更快。</span>';
     } else {
-        modeHint.innerHTML = '';
+        if (modeHint) modeHint.innerHTML = '';
     }
     updateModeIndicator();
 }
 
-novelText.addEventListener('input', (e) => updateCharCount(e.target.value));
+if (novelText) novelText.addEventListener('input', (e) => updateCharCount(e.target.value));
 modeRadios.forEach(radio => {
     radio.addEventListener('change', () => {
         if (novelText.value.trim()) updateCharCount(novelText.value);
@@ -387,6 +447,27 @@ const progressSteps = [
 ];
 
 async function convertNovel(text, title, style) {
+    const chineseChars = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+    const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || 'short';
+    const THRESHOLD = 10000;
+
+    if (selectedMode === 'short' && chineseChars > THRESHOLD) {
+        const ok = confirm(`当前文本中文字符数约 ${chineseChars} 字，超过短文本模式建议范围（${THRESHOLD}字以内）。\n短文本模式将只处理开头部分，可能丢失后续情节。是否继续？`);
+        if (!ok) {
+            setStatus('已取消转换');
+            return;
+        }
+    }
+
+    let actualMode = selectedMode;
+    if (selectedMode === 'long' && chineseChars <= THRESHOLD) {
+        actualMode = 'short';
+        setStatus('文本较短，自动切换为短文本模式');
+    }
+
+    const apiUrl = actualMode === 'long' ? '/api/convert/long' : '/api/convert';
+    const modelValue = speedSelect ? speedSelect.value : 'qwen-turbo';
+
     setLoading(true);
     setStatus('转换中...');
     let stepIndex = 0;
@@ -398,13 +479,12 @@ async function convertNovel(text, title, style) {
             setStatus(progressSteps[progressSteps.length - 1]);
         }
     }, 3000);
+
     try {
-        const actual = getActualMode();
-        const apiUrl = actual.mode === 'long' ? '/api/convert/long' : '/api/convert';
         const response = await fetch(apiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: text, title: title, style: style })
+            body: JSON.stringify({ text: text, title: title, style: style, model: modelValue })
         });
         if (!response.ok) throw new Error(`服务器错误 ${response.status}`);
         const scriptData = await response.json();
@@ -416,6 +496,7 @@ async function convertNovel(text, title, style) {
         enableExportButtons();
         loadRelationGraph(scriptData);
         loadScriptAnalysis(scriptData);
+        saveToLocalStorage(scriptData);  // 自动保存
         if (progressInterval) clearInterval(progressInterval);
         setStatus('转换成功');
         if (chatInput) chatInput.disabled = false;
@@ -447,13 +528,13 @@ async function onFileSelected(file) {
         return;
     }
     const content = await readFile(file);
-    novelText.value = content;
+    if (novelText) novelText.value = content;
     updateCharCount(content);
     const title = file.name.replace(/\.txt$/, '');
-    await convertNovel(content, title, styleSelect.value);
+    await convertNovel(content, title, styleSelect ? styleSelect.value : 'realistic');
 }
 
-// ========== 事件绑定 ==========
+// 事件绑定
 if (dropZone) {
     dropZone.addEventListener('click', () => fileInput.click());
     dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-purple-500'); });
@@ -472,9 +553,9 @@ if (fileInput) {
 }
 if (convertBtn) {
     convertBtn.addEventListener('click', async () => {
-        const text = novelText.value.trim();
+        const text = novelText ? novelText.value.trim() : '';
         if (!text) { alert('请先粘贴小说内容或上传文件'); return; }
-        await convertNovel(text, '用户小说', styleSelect.value);
+        await convertNovel(text, '用户小说', styleSelect ? styleSelect.value : 'realistic');
     });
 }
 
@@ -529,7 +610,7 @@ if (exportAllBtn) {
 if (sendChatBtn) sendChatBtn.addEventListener('click', sendQuestion);
 if (chatInput) chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendQuestion(); });
 
-// ========== 选项卡切换 ==========
+// 选项卡切换
 function updateTabActive(activeBtn) {
     const btns = [tabScenesBtn, tabCharactersBtn, tabYamlBtn, tabRelationBtn, tabAnalysisBtn];
     btns.forEach(btn => {
@@ -542,44 +623,43 @@ function updateTabActive(activeBtn) {
         activeBtn.classList.remove('border-transparent');
     }
 }
-
 if (tabScenesBtn) {
     tabScenesBtn.addEventListener('click', () => {
-        scenesContainer.classList.remove('hidden');
-        charactersContainer.classList.add('hidden');
-        yamlContainer.classList.add('hidden');
-        relationContainer.classList.add('hidden');
-        analysisContainer.classList.add('hidden');
+        if (scenesContainer) scenesContainer.classList.remove('hidden');
+        if (charactersContainer) charactersContainer.classList.add('hidden');
+        if (yamlContainer) yamlContainer.classList.add('hidden');
+        if (relationContainer) relationContainer.classList.add('hidden');
+        if (analysisContainer) analysisContainer.classList.add('hidden');
         updateTabActive(tabScenesBtn);
     });
 }
 if (tabCharactersBtn) {
     tabCharactersBtn.addEventListener('click', () => {
-        scenesContainer.classList.add('hidden');
-        charactersContainer.classList.remove('hidden');
-        yamlContainer.classList.add('hidden');
-        relationContainer.classList.add('hidden');
-        analysisContainer.classList.add('hidden');
+        if (scenesContainer) scenesContainer.classList.add('hidden');
+        if (charactersContainer) charactersContainer.classList.remove('hidden');
+        if (yamlContainer) yamlContainer.classList.add('hidden');
+        if (relationContainer) relationContainer.classList.add('hidden');
+        if (analysisContainer) analysisContainer.classList.add('hidden');
         updateTabActive(tabCharactersBtn);
     });
 }
 if (tabYamlBtn) {
     tabYamlBtn.addEventListener('click', () => {
-        scenesContainer.classList.add('hidden');
-        charactersContainer.classList.add('hidden');
-        yamlContainer.classList.remove('hidden');
-        relationContainer.classList.add('hidden');
-        analysisContainer.classList.add('hidden');
+        if (scenesContainer) scenesContainer.classList.add('hidden');
+        if (charactersContainer) charactersContainer.classList.add('hidden');
+        if (yamlContainer) yamlContainer.classList.remove('hidden');
+        if (relationContainer) relationContainer.classList.add('hidden');
+        if (analysisContainer) analysisContainer.classList.add('hidden');
         updateTabActive(tabYamlBtn);
     });
 }
 if (tabRelationBtn) {
     tabRelationBtn.addEventListener('click', () => {
-        scenesContainer.classList.add('hidden');
-        charactersContainer.classList.add('hidden');
-        yamlContainer.classList.add('hidden');
-        relationContainer.classList.remove('hidden');
-        analysisContainer.classList.add('hidden');
+        if (scenesContainer) scenesContainer.classList.add('hidden');
+        if (charactersContainer) charactersContainer.classList.add('hidden');
+        if (yamlContainer) yamlContainer.classList.add('hidden');
+        if (relationContainer) relationContainer.classList.remove('hidden');
+        if (analysisContainer) analysisContainer.classList.add('hidden');
         updateTabActive(tabRelationBtn);
         if (network && relationData) {
             setTimeout(() => network.redraw(), 100);
@@ -588,19 +668,20 @@ if (tabRelationBtn) {
 }
 if (tabAnalysisBtn) {
     tabAnalysisBtn.addEventListener('click', () => {
-        scenesContainer.classList.add('hidden');
-        charactersContainer.classList.add('hidden');
-        yamlContainer.classList.add('hidden');
-        relationContainer.classList.add('hidden');
-        analysisContainer.classList.remove('hidden');
+        if (scenesContainer) scenesContainer.classList.add('hidden');
+        if (charactersContainer) charactersContainer.classList.add('hidden');
+        if (yamlContainer) yamlContainer.classList.add('hidden');
+        if (relationContainer) relationContainer.classList.add('hidden');
+        if (analysisContainer) analysisContainer.classList.remove('hidden');
         updateTabActive(tabAnalysisBtn);
     });
 }
 
-// 初始化
-hljs.highlightAll();
-yamlContainer.classList.remove('hidden');
-scenesContainer.classList.add('hidden');
-charactersContainer.classList.add('hidden');
-relationContainer.classList.add('hidden');
-analysisContainer.classList.add('hidden');
+// 初始化：尝试加载本地历史
+loadFromLocalStorage();
+if (typeof hljs !== 'undefined') hljs.highlightAll();
+if (yamlContainer) yamlContainer.classList.remove('hidden');
+if (scenesContainer) scenesContainer.classList.add('hidden');
+if (charactersContainer) charactersContainer.classList.add('hidden');
+if (relationContainer) relationContainer.classList.add('hidden');
+if (analysisContainer) analysisContainer.classList.add('hidden');

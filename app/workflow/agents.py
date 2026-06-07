@@ -8,11 +8,11 @@ from datetime import datetime
 
 load_dotenv()
 
-def get_llm(model="qwen-plus", temperature=0.3):
+def get_llm(model="qwen-turbo", temperature=0.3):
     return ChatOpenAI(
         model=model,
         temperature=temperature,
-        max_tokens=16384,   # 增大到 16384，防止长文本输出截断
+        max_tokens=16384,
         api_key=os.getenv("DASHSCOPE_API_KEY"),
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
     )
@@ -29,7 +29,7 @@ def fast_parser_agent(state: dict, llm_fast) -> dict:
     prompt = f"""你是一个专业的小说分析专家。请分析以下小说，输出一个完整的 JSON 对象。
 
 小说原文：
-{state["raw_text"][:8000]}
+{state["raw_text"][:5000]}
 
 输出格式：
 {{
@@ -67,7 +67,7 @@ def script_generation_agent(state: dict, llm) -> dict:
 
 {style_instruction}
 
-小说：{state["raw_text"][:3000]}   # 减少输入长度，避免输出过长
+小说：{state["raw_text"][:3000]}
 角色库（已提取）：
 {json.dumps(state["extracted_characters"], ensure_ascii=False, indent=2)}
 场景框架（已规划）：
@@ -111,6 +111,43 @@ summary:
         raise
     state["final_script"] = final_script
     return state
+
+# ========== 新增：剧本解析总结（含质量评分） ==========
+def script_analysis_agent(script: dict, llm) -> dict:
+    """独立的分析函数，用于生成包含评分的解析报告，被 /api/analysis/summary 调用"""
+    script_str = json.dumps(script, ensure_ascii=False, indent=2)
+    prompt = f"""你是一位资深剧本分析师。请分析以下剧本，生成一份专业的解析报告，并给出1-10分的综合质量评分（10分为最高）。
+
+剧本内容：
+{script_str[:10000]}
+
+请以 JSON 格式输出，键名如下：
+{{
+    "theme": "故事主题",
+    "style": "整体风格判断",
+    "structure": "情节结构分析",
+    "character_arcs": "角色弧线描述",
+    "highlights": ["亮点1", "亮点2"],
+    "suggestions": ["改进建议1", "改进建议2"],
+    "score": 8
+}}
+
+注意：score 字段为整数，表示剧本的综合质量评分。
+"""
+    response = llm.invoke(prompt)
+    content = response.content.strip()
+    if content.startswith("```json"):
+        content = content[7:]
+    elif content.startswith("```"):
+        content = content[3:]
+    if content.endswith("```"):
+        content = content[:-3]
+    content = content.strip()
+    try:
+        result = json.loads(content)
+    except:
+        result = {"error": "解析失败", "raw": content[:500]}
+    return result
 
 # 兼容旧代码
 def chapter_parser_agent(state, llm): pass
