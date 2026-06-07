@@ -15,6 +15,7 @@ import yaml
 import io
 import zipfile
 from collections import defaultdict, Counter
+import re
 
 app = FastAPI(title="AI 小说转剧本工具")
 app.add_middleware(
@@ -24,17 +25,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 class ConvertRequest(BaseModel):
     text: str
     title: str
-    model: Optional[str] = "qwen-plus"
+    model: Optional[str] = "qwen-turbo"
     style: Optional[str] = "realistic"
+
 
 @app.post("/api/convert")
 async def convert(request: ConvertRequest):
     try:
-        print(f"收到转换请求，标题: {request.title}, 风格: {request.style}, 文本长度: {len(request.text)}")
-        script = await convert_novel(request.text, request.title, request.style)
+        print(
+            f"收到转换请求，标题: {request.title}, 风格: {request.style}, 模型: {request.model}, 文本长度: {len(request.text)}")
+        script = await convert_novel(request.text, request.title, request.style, request.model)
         print("剧本生成成功，开始添加统计...")
         dialogues = count_dialogues(script)
         name_map = get_character_name_map(script)
@@ -43,20 +47,22 @@ async def convert(request: ConvertRequest):
         }
         return script
     except Exception as e:
-        print("="*50)
+        print("=" * 50)
         print("转换出错:")
         traceback.print_exc()
-        print("="*50)
+        print("=" * 50)
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...), style: Optional[str] = "realistic"):
+async def upload_file(file: UploadFile = File(...), style: Optional[str] = "realistic",
+                      model: Optional[str] = "qwen-turbo"):
     if not file.filename.endswith('.txt'):
         raise HTTPException(400, "只支持 .txt 文件")
     content = await file.read()
     text = content.decode('utf-8')
     title = file.filename.replace('.txt', '')
-    script = await convert_novel(text, title, style)
+    script = await convert_novel(text, title, style, model)
     dialogues = count_dialogues(script)
     name_map = get_character_name_map(script)
     script["stats"] = {
@@ -64,13 +70,16 @@ async def upload_file(file: UploadFile = File(...), style: Optional[str] = "real
     }
     return script
 
+
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
 
+
 class ChatRequest(BaseModel):
     script: dict
     question: str
+
 
 @app.post("/api/chat2")
 async def chat(request: ChatRequest):
@@ -90,21 +99,17 @@ async def chat(request: ChatRequest):
     response = llm.invoke(prompt)
     return {"answer": response.content}
 
-# ========== 角色关系分析 ==========
+
+# ========== 角色关系分析（优化版：更强模型+丰富上下文） ==========
 @app.post("/api/analysis/relation")
 async def relation_analysis(script: dict):
     from app.workflow.agents import get_llm
+    from collections import defaultdict, Counter
     scenes = script.get("scenes", [])
     characters = script.get("characters", [])
     char_id_to_name = {c["id"]: c["name"] for c in characters}
-    co_occurrence = defaultdict(Counter)
-    for scene in scenes:
-        scene_chars = scene.get("characters", [])
-        for i, c1 in enumerate(scene_chars):
-            for c2 in scene_chars[i+1:]:
-                if c1 != c2:
-                    co_occurrence[c1][c2] += 1
-                    co_occurrence[c2][c1] += 1
+
+    # 统计出场次数
     char_count = defaultdict(int)
     for scene in scenes:
         for cid in scene.get("characters", []):
@@ -114,37 +119,71 @@ async def relation_analysis(script: dict):
         nodes.append({
             "id": cid,
             "label": char_id_to_name.get(cid, cid),
-            "value": cnt,
+            "value": max(cnt, 1),
             "title": f"{char_id_to_name.get(cid, cid)} (出场{cnt}次)"
         })
+
+    # 统计共现次数
+    co_occurrence = defaultdict(Counter)
+    for scene in scenes:
+        scene_chars = scene.get("characters", [])
+        for i, c1 in enumerate(scene_chars):
+            for c2 in scene_chars[i + 1:]:
+                if c1 != c2:
+                    co_occurrence[c1][c2] += 1
+                    co_occurrence[c2][c1] += 1
+
+    # 准备更丰富的上下文
+    char_descriptions = "\n".join(
+        [f"{c['name']} ({c['role_type']}): {c.get('personality', '')[:80]}" for c in characters])
+    summary = script.get("summary", {})
+    logline = summary.get("logline", "")
+    sample_scenes = []
+    for scene in scenes[:3]:
+        setting = scene.get("setting", {})
+        sample_scenes.append(
+            f"场景：{scene.get('title')}，地点：{setting.get('location')}，氛围：{setting.get('atmosphere')}")
+    sample_context = "\n".join(sample_scenes)
+
+    llm = get_llm(model="qwen-plus", temperature=0.2)
+    relation_cache = {}
     edges = []
-    # 可选：调用 LLM 推断关系类型（耗时，可注释）
-    use_relation_label = False  # 若需要关系标签设为 True
-    if use_relation_label:
-        llm = get_llm(model="qwen-turbo", temperature=0.2)
-        script_summary = json.dumps(script.get("summary", {}), ensure_ascii=False)
     for c1, counters in co_occurrence.items():
         for c2, weight in counters.items():
             if c1 < c2:
+                key = f"{c1}|{c2}"
+                if key not in relation_cache:
+                    name1 = char_id_to_name.get(c1, c1)
+                    name2 = char_id_to_name.get(c2, c2)
+                    prompt = f"""你是一个故事分析专家。根据以下信息判断角色"{name1}"和"{name2}"之间的关系。
+角色简介：
+{char_descriptions}
+
+故事梗概：{logline}
+
+部分场景示例：
+{sample_context}
+
+请只输出最合适的一个关系词（例如：恋人、夫妻、同事、朋友、敌对、母子、父女、师徒、主仆、竞争对手、陌生、无直接关系等）。只输出词语，不要解释。"""
+                    try:
+                        resp = llm.invoke(prompt)
+                        label = resp.content.strip().split('\n')[0][:20]
+                        if len(label) > 15:
+                            label = label[:15]
+                        relation_cache[key] = label
+                    except Exception as e:
+                        print(f"关系推断失败: {e}")
+                        relation_cache[key] = "关联"
                 edge = {
                     "from": c1,
                     "to": c2,
                     "value": weight,
-                    "title": f"共同出场 {weight} 次"
+                    "title": f"共同出场 {weight} 次",
+                    "label": relation_cache[key]
                 }
-                if use_relation_label:
-                    # 调用 LLM 获取关系标签（示例，实际可缓存）
-                    name1 = char_id_to_name.get(c1, c1)
-                    name2 = char_id_to_name.get(c2, c2)
-                    prompt = f"""根据剧本，判断角色"{name1}"和"{name2}"之间的关系，只输出一个词（如：恋人、同事、朋友、敌对、母子）。剧本摘要：{script_summary[:500]}"""
-                    try:
-                        resp = llm.invoke(prompt)
-                        label = resp.content.strip().split('\n')[0][:10]
-                        edge["label"] = label
-                    except:
-                        pass
                 edges.append(edge)
     return {"nodes": nodes, "edges": edges}
+
 
 # ========== 剧本解析总结 ==========
 @app.post("/api/analysis/summary")
@@ -189,18 +228,16 @@ async def script_summary(script: dict):
         result = {"error": "解析失败", "raw": content[:500]}
     return result
 
+
 # ========== 打包下载 ==========
 @app.post("/api/export/all")
 async def export_all(script: dict):
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        # YAML
         yaml_str = yaml.dump(script, allow_unicode=True, indent=2)
         zip_file.writestr("script.yaml", yaml_str)
-        # JSON
         json_str = json.dumps(script, ensure_ascii=False, indent=2)
         zip_file.writestr("script.json", json_str)
-        # 角色信息
         chars = script.get("characters", [])
         md_chars = "# 角色信息\n\n"
         for c in chars:
@@ -210,7 +247,6 @@ async def export_all(script: dict):
             md_chars += f"  - 背景：{c.get('background', '无')}\n"
             md_chars += f"  - 首次出现：{c.get('first_appearance', '未知')}\n\n"
         zip_file.writestr("characters.md", md_chars)
-        # 场景信息
         scenes = script.get("scenes", [])
         md_scenes = "# 场景信息\n\n"
         for s in scenes:
@@ -221,7 +257,6 @@ async def export_all(script: dict):
             md_scenes += f"- 出场角色：{', '.join(s.get('characters', []))}\n"
             md_scenes += f"- 情感弧线：{s.get('emotional_arc', '无')}\n\n"
         zip_file.writestr("scenes.md", md_scenes)
-        # 统计信息
         stats = script.get("stats", {})
         md_stats = "# 剧本统计\n\n"
         if stats.get("character_dialogues"):
@@ -230,13 +265,92 @@ async def export_all(script: dict):
                 md_stats += f"- {name}: {cnt} 条\n"
         zip_file.writestr("analysis.md", md_stats)
     zip_buffer.seek(0)
-    return StreamingResponse(zip_buffer, media_type="application/zip", headers={"Content-Disposition": "attachment; filename=script_export.zip"})
+    return StreamingResponse(zip_buffer, media_type="application/zip",
+                             headers={"Content-Disposition": "attachment; filename=script_export.zip"})
+
+
+# ========== 长文本分段处理 ==========
+def split_into_chapters(text: str) -> list:
+    """按中文章节标题切分文本，返回章节列表"""
+    pattern = r'^(第[一二三四五六七八九十百千万0-9]+[章节])'
+    lines = text.split('\n')
+    chapters = []
+    current_chapter = ""
+    for line in lines:
+        if re.match(pattern, line.strip()):
+            if current_chapter:
+                chapters.append(current_chapter.strip())
+            current_chapter = line + "\n"
+        else:
+            current_chapter += line + "\n"
+    if current_chapter:
+        chapters.append(current_chapter.strip())
+    if len(chapters) <= 1:
+        chunk_size = 2000
+        chapters = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+    return chapters
+
+
+@app.post("/api/convert/long")
+async def convert_long(request: ConvertRequest):
+    print("收到长文本转换请求，长度:", len(request.text))
+    chapters = split_into_chapters(request.text)
+    print(f"切分为 {len(chapters)} 个片段")
+
+    merged_characters = {}
+    merged_scenes = []
+    merged_metadata = None
+    merged_summary = None
+
+    for idx, chapter_text in enumerate(chapters):
+        print(f"处理第 {idx + 1}/{len(chapters)} 片段...")
+        temp_title = f"{request.title}_part{idx + 1}"
+        script = await convert_novel(chapter_text, temp_title, request.style, request.model)
+
+        for char in script.get("characters", []):
+            char_id = char["id"]
+            if char_id not in merged_characters:
+                merged_characters[char_id] = char
+
+        base_scene_id = len(merged_scenes) + 1
+        for scene in script.get("scenes", []):
+            new_id = f"S{base_scene_id:03d}"
+            scene["scene_id"] = new_id
+            merged_scenes.append(scene)
+            base_scene_id += 1
+
+        if merged_metadata is None:
+            merged_metadata = script.get("metadata", {})
+            merged_metadata["title"] = request.title
+            merged_metadata["total_chapters"] = len(chapters)
+
+        if merged_summary is None:
+            merged_summary = script.get("summary", {})
+
+    final_characters = list(merged_characters.values())
+    final_scenes = merged_scenes
+    final_script = {
+        "metadata": merged_metadata,
+        "characters": final_characters,
+        "scenes": final_scenes,
+        "summary": merged_summary,
+        "stats": {}
+    }
+    dialogues = count_dialogues(final_script)
+    name_map = get_character_name_map(final_script)
+    final_script["stats"] = {
+        "character_dialogues": {name_map.get(k, k): v for k, v in dialogues.items()}
+    }
+    return final_script
+
 
 # ========== 前端服务 ==========
 BASE_DIR = Path(__file__).parent.parent
 frontend_dir = BASE_DIR / "frontend"
 if frontend_dir.exists():
     app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
+
+
     @app.get("/")
     async def serve_index():
         index_path = frontend_dir / "index.html"
@@ -246,4 +360,5 @@ if frontend_dir.exists():
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -16,3 +16,10 @@ __pycache__/
 
 # OS files
 .DS_Store
+
+# Temporary test files
+output_*.json
+output_*.yaml
+test_*.py
+convert_*.py
+docs/*.png

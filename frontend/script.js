@@ -13,8 +13,16 @@ const statsPanel = document.getElementById('statsPanel');
 const styleSelect = document.getElementById('styleSelect');
 const loadingIcon = document.getElementById('loadingIcon');
 const convertText = document.getElementById('convertText');
+const speedSelect = document.getElementById('speedSelect');
+const newChatBtn = document.getElementById('newChatBtn');
+const chatInput = document.getElementById('chatInput');
+const sendChatBtn = document.getElementById('sendChatBtn');
+const chatHistoryDiv = document.getElementById('chatHistoryDiv');
+const historyBtn = document.getElementById('historyBtn');
+const historyDropdown = document.getElementById('historyDropdown');
+const historyList = document.getElementById('historyList');
+const clearAllHistoryBtn = document.getElementById('clearAllHistoryBtn');
 
-// 选项卡元素
 const tabScenesBtn = document.getElementById('tabScenesBtn');
 const tabCharactersBtn = document.getElementById('tabCharactersBtn');
 const tabYamlBtn = document.getElementById('tabYamlBtn');
@@ -27,16 +35,127 @@ const relationContainer = document.getElementById('relationContainer');
 const analysisContainer = document.getElementById('analysisContainer');
 const analysisContent = document.getElementById('analysisContent');
 
-// AI 聊天元素
-const chatInput = document.getElementById('chatInput');
-const sendChatBtn = document.getElementById('sendChatBtn');
-const chatHistory = document.getElementById('chatHistory');
-
 let currentScriptData = null;
 let statsChart = null;
 let network = null;
 let relationData = null;
 let progressInterval = null;
+
+const modeRadios = document.querySelectorAll('input[name="mode"]');
+const charCountSpan = document.getElementById('charCount');
+const wordCountSpan = document.getElementById('wordCount');
+const modeHint = document.getElementById('modeHint');
+const activeModeText = document.getElementById('activeModeText');
+const activeModeReason = document.getElementById('activeModeReason');
+
+// ========== 历史版本管理 ==========
+let scriptHistory = []; // 每个元素：{ id, title, timestamp, mode, model, scriptData }
+
+function loadHistoryFromStorage() {
+    const stored = localStorage.getItem('scriptHistory');
+    if (stored) {
+        try {
+            scriptHistory = JSON.parse(stored);
+        } catch(e) { console.warn(e); }
+    }
+    renderHistoryList();
+}
+
+function saveHistoryToStorage() {
+    localStorage.setItem('scriptHistory', JSON.stringify(scriptHistory));
+}
+
+function addToHistory(scriptData, title, actualMode, model) {
+    const id = Date.now();
+    const timestamp = new Date().toLocaleString();
+    const modeDisplay = actualMode === 'long' ? '长文本模式' : '短文本模式';
+    const modelDisplay = model === 'qwen-turbo' ? '快速模式' : '高质量模式';
+    scriptHistory.unshift({ id, title, timestamp, mode: modeDisplay, model: modelDisplay, scriptData });
+    if (scriptHistory.length > 20) scriptHistory.pop();
+    saveHistoryToStorage();
+    renderHistoryList();
+}
+
+function renderHistoryList() {
+    if (!historyList) return;
+    if (scriptHistory.length === 0) {
+        historyList.innerHTML = '<div class="p-2 text-gray-400 text-sm">暂无历史</div>';
+        return;
+    }
+    let html = '';
+    scriptHistory.forEach(item => {
+        html += `
+            <div class="history-item flex justify-between items-center p-2 border-b border-gray-700 hover:bg-gray-700 cursor-pointer" data-id="${item.id}">
+                <div class="flex-1 overflow-hidden">
+                    <div class="text-sm font-medium truncate">${escapeHtml(item.title)}</div>
+                    <div class="text-xs text-gray-400">${item.timestamp}</div>
+                    <div class="text-xs text-gray-400 flex gap-2">
+                        <span>${item.mode || '-'}</span>
+                        <span>${item.model || '-'}</span>
+                    </div>
+                </div>
+                <button class="delete-history text-xs text-red-400 hover:text-red-300 ml-2" data-id="${item.id}">🗑️</button>
+            </div>
+        `;
+    });
+    historyList.innerHTML = html;
+    // 绑定点击事件
+    document.querySelectorAll('.history-item').forEach(el => {
+        el.addEventListener('click', (e) => {
+            if (e.target.classList.contains('delete-history')) return;
+            const id = parseInt(el.dataset.id);
+            const item = scriptHistory.find(h => h.id === id);
+            if (item) {
+                loadScriptVersion(item.scriptData);
+                historyDropdown.classList.add('hidden');
+            }
+        });
+    });
+    document.querySelectorAll('.delete-history').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const id = parseInt(btn.dataset.id);
+            scriptHistory = scriptHistory.filter(h => h.id !== id);
+            saveHistoryToStorage();
+            renderHistoryList();
+        });
+    });
+}
+
+function loadScriptVersion(scriptData) {
+    currentScriptData = scriptData;
+    displayYaml(scriptData);
+    renderScenes(scriptData);
+    renderCharacters(scriptData);
+    renderStats(scriptData);
+    enableExportButtons();
+    loadRelationGraph(scriptData);
+    loadScriptAnalysis(scriptData);
+    setStatus('已加载历史版本', false);
+    if (chatInput) chatInput.disabled = false;
+    if (sendChatBtn) sendChatBtn.disabled = false;
+}
+
+if (historyBtn && historyDropdown) {
+    historyBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        historyDropdown.classList.toggle('hidden');
+    });
+    document.addEventListener('click', function(e) {
+        if (!historyBtn.contains(e.target) && !historyDropdown.contains(e.target)) {
+            historyDropdown.classList.add('hidden');
+        }
+    });
+}
+if (clearAllHistoryBtn) {
+    clearAllHistoryBtn.addEventListener('click', () => {
+        if (confirm('确定清空所有历史版本吗？')) {
+            scriptHistory = [];
+            saveHistoryToStorage();
+            renderHistoryList();
+        }
+    });
+}
 
 // ========== 辅助函数 ==========
 function getCharacterName(scriptData, charId) {
@@ -57,10 +176,7 @@ function escapeHtml(str) {
 }
 
 function setStatus(text, isError = false) {
-    if (!statusBadge) {
-        console.warn('statusBadge not found');
-        return;
-    }
+    if (!statusBadge) return;
     statusBadge.innerText = text;
     statusBadge.className = `text-xs px-2 py-1 rounded-full ${isError ? 'bg-red-600' : 'bg-purple-600'}`;
 }
@@ -71,10 +187,16 @@ function setLoading(isLoading) {
         convertBtn.disabled = true;
         loadingIcon.classList.remove('hidden');
         convertText.innerText = '转换中...';
+        if (styleSelect) styleSelect.disabled = true;
+        if (speedSelect) speedSelect.disabled = true;
+        modeRadios.forEach(radio => radio.disabled = true);
     } else {
         convertBtn.disabled = false;
         loadingIcon.classList.add('hidden');
         convertText.innerText = '开始转换剧本';
+        if (styleSelect) styleSelect.disabled = false;
+        if (speedSelect) speedSelect.disabled = false;
+        modeRadios.forEach(radio => radio.disabled = false);
     }
 }
 
@@ -174,7 +296,6 @@ function renderStats(scriptData) {
     document.getElementById('statsText').innerText = `总台词数: ${data.reduce((a,b)=>a+b,0)} 条`;
 }
 
-// ========== 角色关系网络图 ==========
 async function loadRelationGraph(scriptData) {
     try {
         const response = await fetch('/api/analysis/relation', {
@@ -200,14 +321,15 @@ function drawNetwork(data) {
     const options = {
         nodes: {
             shape: 'dot',
-            size: 20,
-            font: { color: '#ffffff', size: 14 },
+            size: 18,
+            font: { color: '#ffffff', size: 12 },
             shadow: true
         },
         edges: {
             smooth: { type: 'cubicBezier' },
             width: 1,
-            color: { color: '#8888ff', highlight: '#ff8888' }
+            color: { color: '#8888ff', highlight: '#ff8888' },
+            font: { align: 'middle', size: 9, color: '#ffcc88', strokeWidth: 0 }
         },
         physics: {
             stabilization: true,
@@ -216,9 +338,23 @@ function drawNetwork(data) {
         interaction: { hover: true, tooltipDelay: 200 }
     };
     network = new vis.Network(container, { nodes, edges }, options);
+    network.on('click', function(params) {
+        if (params.nodes.length > 0) {
+            const nodeId = params.nodes[0];
+            const node = data.nodes.find(n => n.id === nodeId);
+            if (node) {
+                alert(`角色: ${node.label}\n出场次数: ${node.value}\n${node.title}`);
+            }
+        } else if (params.edges.length > 0) {
+            const edgeId = params.edges[0];
+            const edge = data.edges.find(e => e.id === edgeId);
+            if (edge) {
+                alert(`关系: ${edge.label || '未知'}\n${edge.title}`);
+            }
+        }
+    });
 }
 
-// ========== 剧本解析总结 ==========
 async function loadScriptAnalysis(scriptData) {
     if (!analysisContent) return;
     analysisContent.innerHTML = '<div class="text-gray-400">正在分析剧本...</div>';
@@ -270,7 +406,49 @@ function renderAnalysis(data) {
     analysisContent.innerHTML = html;
 }
 
-// ========== AI 聊天功能 ==========
+// ========== AI 聊天历史 ==========
+let chatMessages = [];
+
+function saveChatMessages() {
+    localStorage.setItem('chatMessages', JSON.stringify(chatMessages));
+}
+
+function loadChatMessages() {
+    const saved = localStorage.getItem('chatMessages');
+    if (saved) {
+        try {
+            chatMessages = JSON.parse(saved);
+            renderChatMessages();
+        } catch(e) { console.warn(e); }
+    }
+}
+
+function renderChatMessages() {
+    if (!chatHistoryDiv) return;
+    chatHistoryDiv.innerHTML = '';
+    for (const msg of chatMessages) {
+        const div = document.createElement('div');
+        div.className = `mb-2 ${msg.role === 'user' ? 'text-right' : 'text-left'}`;
+        const bg = msg.role === 'user' ? 'bg-purple-600' : 'bg-gray-700';
+        div.innerHTML = `<span class="inline-block ${bg} rounded-lg px-3 py-1 text-sm">${escapeHtml(msg.content)}</span>`;
+        chatHistoryDiv.appendChild(div);
+    }
+    chatHistoryDiv.scrollTop = chatHistoryDiv.scrollHeight;
+}
+
+function addChatMessage(role, content) {
+    chatMessages.push({ role, content });
+    if (chatMessages.length > 50) chatMessages.shift();
+    saveChatMessages();
+    renderChatMessages();
+}
+
+function clearChatMessages() {
+    chatMessages = [];
+    saveChatMessages();
+    renderChatMessages();
+}
+
 async function sendQuestion() {
     if (!currentScriptData) {
         alert('请先转换一部剧本');
@@ -278,16 +456,9 @@ async function sendQuestion() {
     }
     const question = chatInput.value.trim();
     if (!question) return;
-    const userMsgDiv = document.createElement('div');
-    userMsgDiv.className = 'mb-2 text-right';
-    userMsgDiv.innerHTML = `<span class="inline-block bg-purple-600 rounded-lg px-3 py-1 text-sm">${escapeHtml(question)}</span>`;
-    chatHistory.appendChild(userMsgDiv);
+    addChatMessage('user', question);
     chatInput.value = '';
-    const loadingDiv = document.createElement('div');
-    loadingDiv.className = 'mb-2 text-left text-gray-400';
-    loadingDiv.innerHTML = '<span class="inline-block bg-gray-700 rounded-lg px-3 py-1 text-sm">思考中...</span>';
-    chatHistory.appendChild(loadingDiv);
-    chatHistory.scrollTop = chatHistory.scrollHeight;
+    addChatMessage('assistant', '思考中...');
     try {
         const response = await fetch('/api/chat2', {
             method: 'POST',
@@ -296,18 +467,63 @@ async function sendQuestion() {
         });
         if (!response.ok) throw new Error('聊天请求失败');
         const data = await response.json();
-        loadingDiv.remove();
-        const answerDiv = document.createElement('div');
-        answerDiv.className = 'mb-2 text-left';
-        answerDiv.innerHTML = `<span class="inline-block bg-gray-700 rounded-lg px-3 py-1 text-sm">${escapeHtml(data.answer)}</span>`;
-        chatHistory.appendChild(answerDiv);
-        chatHistory.scrollTop = chatHistory.scrollHeight;
+        chatMessages.pop();
+        addChatMessage('assistant', data.answer);
     } catch (err) {
-        loadingDiv.innerHTML = `<span class="inline-block bg-red-600 rounded-lg px-3 py-1 text-sm">错误: ${err.message}</span>`;
+        chatMessages.pop();
+        addChatMessage('assistant', `错误: ${err.message}`);
     }
 }
 
-// ========== 转换主函数（带模拟进度） ==========
+if (newChatBtn) newChatBtn.addEventListener('click', clearChatMessages);
+if (sendChatBtn) sendChatBtn.addEventListener('click', sendQuestion);
+if (chatInput) chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendQuestion(); });
+
+// ========== 模式与字数统计 ==========
+function getActualMode() {
+    const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || 'short';
+    const text = novelText.value.trim();
+    const chineseChars = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+    const isLong = (selectedMode === 'long' || chineseChars >= 10000);
+    let reason = '';
+    if (selectedMode === 'long') reason = '用户手动选择长文本模式';
+    else if (chineseChars >= 10000) reason = '文本超过1万字，自动切换为长文本模式';
+    else reason = '文本不足1万字，使用短文本模式';
+    return { mode: isLong ? 'long' : 'short', reason };
+}
+
+function updateModeIndicator() {
+    const actual = getActualMode();
+    const modeText = actual.mode === 'long' ? '长文本模式 (分段处理)' : '短文本模式 (一次性生成)';
+    if (activeModeText) activeModeText.innerText = modeText;
+    if (activeModeReason) activeModeReason.innerText = actual.reason;
+}
+
+function updateCharCount(text) {
+    const totalChars = text.length;
+    const chineseChars = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+    if (charCountSpan) charCountSpan.innerText = totalChars;
+    if (wordCountSpan) wordCountSpan.innerText = chineseChars;
+    const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || 'short';
+    const isLong = chineseChars >= 10000;
+    if (selectedMode === 'short' && isLong) {
+        if (modeHint) modeHint.innerHTML = '<span class="text-yellow-400">⚠️ 当前文本超过1万字，建议切换到“长文本模式”以获得更好的处理效果。</span>';
+    } else if (selectedMode === 'long' && !isLong) {
+        if (modeHint) modeHint.innerHTML = '<span class="text-blue-400">💡 文本较短，使用“短文本模式”速度更快。</span>';
+    } else {
+        if (modeHint) modeHint.innerHTML = '';
+    }
+    updateModeIndicator();
+}
+
+if (novelText) novelText.addEventListener('input', (e) => updateCharCount(e.target.value));
+modeRadios.forEach(radio => {
+    radio.addEventListener('change', () => {
+        if (novelText.value.trim()) updateCharCount(novelText.value);
+    });
+});
+
+// ========== 转换主函数 ==========
 const progressSteps = [
     "📖 正在解析小说章节...",
     "👥 正在提取角色信息...",
@@ -317,11 +533,39 @@ const progressSteps = [
 ];
 
 async function convertNovel(text, title, style) {
-    setLoading(true);
-    setStatus('转换中...');
+    const chineseChars = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+    const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || 'short';
+    const THRESHOLD = 10000;
 
-    // 启动模拟进度更新（每3秒切换一条状态）
+    if (selectedMode === 'short' && chineseChars > THRESHOLD) {
+        const ok = confirm(`当前文本中文字符数约 ${chineseChars} 字，超过短文本模式建议范围（${THRESHOLD}字以内）。\n短文本模式将只处理开头部分，可能丢失后续情节。是否继续？`);
+        if (!ok) {
+            setStatus('已取消转换');
+            return;
+        }
+    }
+
+    let actualMode = selectedMode;
+    if (selectedMode === 'long' && chineseChars <= THRESHOLD) {
+        actualMode = 'short';
+        setStatus('文本较短，自动切换为短文本模式');
+    }
+
+    const apiUrl = actualMode === 'long' ? '/api/convert/long' : '/api/convert';
+    const modelValue = speedSelect ? speedSelect.value : 'qwen-turbo';
+
+    // 进度提示（长文本模式给出估算）
+    if (actualMode === 'long') {
+        // 估算片段数：每2000字符一个片段
+        const estimatedChunks = Math.ceil(text.length / 2000);
+        setStatus(`长文本模式处理中，预计需要处理 ${estimatedChunks} 个片段，请耐心等待（约2-5分钟）...`);
+    } else {
+        setStatus('转换中...');
+    }
+
+    setLoading(true);
     let stepIndex = 0;
+    if (progressInterval) clearInterval(progressInterval);
     progressInterval = setInterval(() => {
         if (stepIndex < progressSteps.length) {
             setStatus(progressSteps[stepIndex]);
@@ -332,10 +576,10 @@ async function convertNovel(text, title, style) {
     }, 3000);
 
     try {
-        const response = await fetch('/api/convert', {
+        const response = await fetch(apiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: text, title: title, style: style })
+            body: JSON.stringify({ text: text, title: title, style: style, model: modelValue })
         });
         if (!response.ok) throw new Error(`服务器错误 ${response.status}`);
         const scriptData = await response.json();
@@ -347,6 +591,8 @@ async function convertNovel(text, title, style) {
         enableExportButtons();
         loadRelationGraph(scriptData);
         loadScriptAnalysis(scriptData);
+        // 保存到历史（记录使用的模式）
+        addToHistory(scriptData, title, actualMode, modelValue);
         if (progressInterval) clearInterval(progressInterval);
         setStatus('转换成功');
         if (chatInput) chatInput.disabled = false;
@@ -363,7 +609,6 @@ async function convertNovel(text, title, style) {
     }
 }
 
-// ========== 文件处理 ==========
 function readFile(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -379,12 +624,13 @@ async function onFileSelected(file) {
         return;
     }
     const content = await readFile(file);
-    novelText.value = content;
+    if (novelText) novelText.value = content;
+    updateCharCount(content);
     const title = file.name.replace(/\.txt$/, '');
-    await convertNovel(content, title, styleSelect.value);
+    await convertNovel(content, title, styleSelect ? styleSelect.value : 'realistic');
 }
 
-// ========== 事件绑定 ==========
+// 事件绑定
 if (dropZone) {
     dropZone.addEventListener('click', () => fileInput.click());
     dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-purple-500'); });
@@ -403,9 +649,9 @@ if (fileInput) {
 }
 if (convertBtn) {
     convertBtn.addEventListener('click', async () => {
-        const text = novelText.value.trim();
+        const text = novelText ? novelText.value.trim() : '';
         if (!text) { alert('请先粘贴小说内容或上传文件'); return; }
-        await convertNovel(text, '用户小说', styleSelect.value);
+        await convertNovel(text, '用户小说', styleSelect ? styleSelect.value : 'realistic');
     });
 }
 
@@ -457,15 +703,6 @@ if (exportAllBtn) {
     });
 }
 
-if (sendChatBtn) {
-    sendChatBtn.addEventListener('click', sendQuestion);
-}
-if (chatInput) {
-    chatInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') sendQuestion();
-    });
-}
-
 // 选项卡切换
 function updateTabActive(activeBtn) {
     const btns = [tabScenesBtn, tabCharactersBtn, tabYamlBtn, tabRelationBtn, tabAnalysisBtn];
@@ -481,41 +718,41 @@ function updateTabActive(activeBtn) {
 }
 if (tabScenesBtn) {
     tabScenesBtn.addEventListener('click', () => {
-        if (scenesContainer) scenesContainer.classList.remove('hidden');
-        if (charactersContainer) charactersContainer.classList.add('hidden');
-        if (yamlContainer) yamlContainer.classList.add('hidden');
-        if (relationContainer) relationContainer.classList.add('hidden');
-        if (analysisContainer) analysisContainer.classList.add('hidden');
+        scenesContainer.classList.remove('hidden');
+        charactersContainer.classList.add('hidden');
+        yamlContainer.classList.add('hidden');
+        relationContainer.classList.add('hidden');
+        analysisContainer.classList.add('hidden');
         updateTabActive(tabScenesBtn);
     });
 }
 if (tabCharactersBtn) {
     tabCharactersBtn.addEventListener('click', () => {
-        if (scenesContainer) scenesContainer.classList.add('hidden');
-        if (charactersContainer) charactersContainer.classList.remove('hidden');
-        if (yamlContainer) yamlContainer.classList.add('hidden');
-        if (relationContainer) relationContainer.classList.add('hidden');
-        if (analysisContainer) analysisContainer.classList.add('hidden');
+        scenesContainer.classList.add('hidden');
+        charactersContainer.classList.remove('hidden');
+        yamlContainer.classList.add('hidden');
+        relationContainer.classList.add('hidden');
+        analysisContainer.classList.add('hidden');
         updateTabActive(tabCharactersBtn);
     });
 }
 if (tabYamlBtn) {
     tabYamlBtn.addEventListener('click', () => {
-        if (scenesContainer) scenesContainer.classList.add('hidden');
-        if (charactersContainer) charactersContainer.classList.add('hidden');
-        if (yamlContainer) yamlContainer.classList.remove('hidden');
-        if (relationContainer) relationContainer.classList.add('hidden');
-        if (analysisContainer) analysisContainer.classList.add('hidden');
+        scenesContainer.classList.add('hidden');
+        charactersContainer.classList.add('hidden');
+        yamlContainer.classList.remove('hidden');
+        relationContainer.classList.add('hidden');
+        analysisContainer.classList.add('hidden');
         updateTabActive(tabYamlBtn);
     });
 }
 if (tabRelationBtn) {
     tabRelationBtn.addEventListener('click', () => {
-        if (scenesContainer) scenesContainer.classList.add('hidden');
-        if (charactersContainer) charactersContainer.classList.add('hidden');
-        if (yamlContainer) yamlContainer.classList.add('hidden');
-        if (relationContainer) relationContainer.classList.remove('hidden');
-        if (analysisContainer) analysisContainer.classList.add('hidden');
+        scenesContainer.classList.add('hidden');
+        charactersContainer.classList.add('hidden');
+        yamlContainer.classList.add('hidden');
+        relationContainer.classList.remove('hidden');
+        analysisContainer.classList.add('hidden');
         updateTabActive(tabRelationBtn);
         if (network && relationData) {
             setTimeout(() => network.redraw(), 100);
@@ -524,18 +761,19 @@ if (tabRelationBtn) {
 }
 if (tabAnalysisBtn) {
     tabAnalysisBtn.addEventListener('click', () => {
-        if (scenesContainer) scenesContainer.classList.add('hidden');
-        if (charactersContainer) charactersContainer.classList.add('hidden');
-        if (yamlContainer) yamlContainer.classList.add('hidden');
-        if (relationContainer) relationContainer.classList.add('hidden');
-        if (analysisContainer) analysisContainer.classList.remove('hidden');
+        scenesContainer.classList.add('hidden');
+        charactersContainer.classList.add('hidden');
+        yamlContainer.classList.add('hidden');
+        relationContainer.classList.add('hidden');
+        analysisContainer.classList.remove('hidden');
         updateTabActive(tabAnalysisBtn);
     });
 }
 
-// 初始化 hljs
-hljs.highlightAll();
-// 默认显示 YAML 容器
+// 初始化
+loadHistoryFromStorage();
+loadChatMessages();
+if (typeof hljs !== 'undefined') hljs.highlightAll();
 if (yamlContainer) yamlContainer.classList.remove('hidden');
 if (scenesContainer) scenesContainer.classList.add('hidden');
 if (charactersContainer) charactersContainer.classList.add('hidden');

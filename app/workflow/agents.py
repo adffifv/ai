@@ -3,16 +3,15 @@ import json
 from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 import os
-import yaml
 from datetime import datetime
 
 load_dotenv()
 
-def get_llm(model="qwen-plus", temperature=0.3):
+def get_llm(model="qwen-turbo", temperature=0.3):
     return ChatOpenAI(
         model=model,
         temperature=temperature,
-        max_tokens=4096,
+        max_tokens=16384,
         api_key=os.getenv("DASHSCOPE_API_KEY"),
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
     )
@@ -29,7 +28,7 @@ def fast_parser_agent(state: dict, llm_fast) -> dict:
     prompt = f"""你是一个专业的小说分析专家。请分析以下小说，输出一个完整的 JSON 对象。
 
 小说原文：
-{state["raw_text"][:8000]}
+{state["raw_text"][:5000]}
 
 输出格式：
 {{
@@ -57,47 +56,81 @@ def fast_parser_agent(state: dict, llm_fast) -> dict:
 def script_generation_agent(state: dict, llm) -> dict:
     style = state.get("style", "realistic")
     style_prompts = {
-        "realistic": "【风格要求】采用写实风格，对白自然生活化，动作描写细腻真实，符合日常逻辑。",
-        "suspense": "【风格要求】采用悬疑风格，营造紧张不安的氛围，多用短句、留白和环境暗示，对白简练富有张力。",
-        "literary": "【风格要求】采用文艺风格，台词富有诗意和哲思，场景意象化，情感表达含蓄而深刻。"
+        "realistic": "写实风格，对白自然生活化，动作描写细腻真实",
+        "suspense": "悬疑风格，营造紧张不安的氛围，多用短句、留白和环境暗示，对白简练富有张力",
+        "literary": "文艺风格，台词富有诗意和哲思，场景意象化，情感表达含蓄而深刻"
     }
     style_instruction = style_prompts.get(style, style_prompts["realistic"])
 
-    prompt = f"""你是编剧，将小说转换为结构化剧本YAML。严格按格式输出。
+    prompt = f"""你是编剧。根据以下小说内容生成结构化剧本，以 JSON 格式输出。
 
 {style_instruction}
 
-小说：{state["raw_text"][:6000]}
-角色库（已提取）：
+小说：{state["raw_text"][:3000]}
+已提取的角色库（仅供参考，可在此基础上丰富）：
 {json.dumps(state["extracted_characters"], ensure_ascii=False, indent=2)}
-场景框架（已规划）：
+已规划的场景框架（仅供参考）：
 {json.dumps(state["planned_scenes"], ensure_ascii=False, indent=2)}
 
-请确保输出完整的 YAML，不要中途截断，所有字符串必须闭合。
+请严格按照以下 JSON Schema 输出，不要添加任何额外字段：
+{{
+    "metadata": {{
+        "title": "{state["source_title"]}（剧本版）",
+        "source_type": "novel",
+        "source_title": "{state["source_title"]}",
+        "total_chapters": {state["total_chapters"]},
+        "converted_scenes": {len(state["planned_scenes"])},
+        "created_at": "{datetime.now().isoformat()}",
+        "model_used": "{llm.model_name}"
+    }},
+    "characters": [
+        {{
+            "id": "char_001",
+            "name": "角色名",
+            "role_type": "protagonist",
+            "personality": "性格描述",
+            "appearance": "外貌",
+            "background": "背景",
+            "first_appearance": "S001"
+        }}
+    ],
+    "scenes": [
+        {{
+            "scene_id": "S001",
+            "title": "场景标题",
+            "setting": {{
+                "location": "地点",
+                "time_of_day": "day/night/morning/afternoon/dawn/dusk",
+                "atmosphere": "氛围"
+            }},
+            "characters": ["char_001"],
+            "emotional_arc": "情感走向",
+            "script": [
+                {{
+                    "character": "char_001",
+                    "dialogue": "台词内容",
+                    "action": "动作描述"
+                }}
+            ]
+        }}
+    ],
+    "summary": {{
+        "logline": "一句话剧情梗概",
+        "structure": {{
+            "inciting_incident": "激励事件",
+            "rising_action": "发展部分",
+            "climax": "高潮",
+            "resolution": "结局"
+        }},
+        "theme": "主题思想"
+    }}
+}}
 
-输出YAML：
-metadata:
-  title: "{state["source_title"]}（剧本版）"
-  source_type: novel
-  source_title: "{state["source_title"]}"
-  total_chapters: {state["total_chapters"]}
-  converted_scenes: {len(state["planned_scenes"])}
-  created_at: "{datetime.now().isoformat()}"
-  model_used: "{llm.model_name}"
-characters: ...
-scenes: ...
-summary:
-  logline: "..."
-  structure:
-    inciting_incident: "..."
-    rising_action: "..."
-    climax: "..."
-    resolution: "..."
-  theme: "..."
+注意：只输出 JSON，不要包含任何其他文字或 markdown 标记。
 """
     resp = llm.invoke(prompt)
     content = resp.content.strip()
-    if content.startswith("```yaml"):
+    if content.startswith("```json"):
         content = content[7:]
     elif content.startswith("```"):
         content = content[3:]
@@ -105,9 +138,9 @@ summary:
         content = content[:-3]
     content = content.strip()
     try:
-        final_script = yaml.safe_load(content)
-    except yaml.YAMLError as e:
-        state["error_log"].append(f"YAML 解析失败: {e}\n内容: {content[:500]}")
+        final_script = json.loads(content)
+    except json.JSONDecodeError as e:
+        state["error_log"].append(f"JSON 解析失败: {e}\n内容: {content[:500]}")
         raise
     state["final_script"] = final_script
     return state
