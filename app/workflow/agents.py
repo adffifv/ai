@@ -8,11 +8,11 @@ from datetime import datetime
 
 load_dotenv()
 
-def get_llm(model="qwen-plus", temperature=0.3):
+def get_llm(model="qwen-turbo", temperature=0.3):   # 默认使用快速模型
     return ChatOpenAI(
         model=model,
         temperature=temperature,
-        max_tokens=16384,   # 增大到 16384，防止长文本输出截断
+        max_tokens=16384,
         api_key=os.getenv("DASHSCOPE_API_KEY"),
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
     )
@@ -29,7 +29,7 @@ def fast_parser_agent(state: dict, llm_fast) -> dict:
     prompt = f"""你是一个专业的小说分析专家。请分析以下小说，输出一个完整的 JSON 对象。
 
 小说原文：
-{state["raw_text"][:8000]}
+{state["raw_text"][:5000]}   # 缩短到5000字符
 
 输出格式：
 {{
@@ -67,7 +67,7 @@ def script_generation_agent(state: dict, llm) -> dict:
 
 {style_instruction}
 
-小说：{state["raw_text"][:3000]}   # 减少输入长度，避免输出过长
+小说：{state["raw_text"][:3000]}   # 缩短到3000字符
 角色库（已提取）：
 {json.dumps(state["extracted_characters"], ensure_ascii=False, indent=2)}
 场景框架（已规划）：

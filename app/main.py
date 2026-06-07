@@ -29,15 +29,16 @@ app.add_middleware(
 class ConvertRequest(BaseModel):
     text: str
     title: str
-    model: Optional[str] = "qwen-plus"
+    model: Optional[str] = "qwen-turbo"  # 默认快速模型
     style: Optional[str] = "realistic"
 
 
 @app.post("/api/convert")
 async def convert(request: ConvertRequest):
     try:
-        print(f"收到转换请求，标题: {request.title}, 风格: {request.style}, 文本长度: {len(request.text)}")
-        script = await convert_novel(request.text, request.title, request.style)
+        print(
+            f"收到转换请求，标题: {request.title}, 风格: {request.style}, 模型: {request.model}, 文本长度: {len(request.text)}")
+        script = await convert_novel(request.text, request.title, request.style, request.model)
         print("剧本生成成功，开始添加统计...")
         dialogues = count_dialogues(script)
         name_map = get_character_name_map(script)
@@ -54,13 +55,14 @@ async def convert(request: ConvertRequest):
 
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...), style: Optional[str] = "realistic"):
+async def upload_file(file: UploadFile = File(...), style: Optional[str] = "realistic",
+                      model: Optional[str] = "qwen-turbo"):
     if not file.filename.endswith('.txt'):
         raise HTTPException(400, "只支持 .txt 文件")
     content = await file.read()
     text = content.decode('utf-8')
     title = file.filename.replace('.txt', '')
-    script = await convert_novel(text, title, style)
+    script = await convert_novel(text, title, style, model)
     dialogues = count_dialogues(script)
     name_map = get_character_name_map(script)
     script["stats"] = {
@@ -83,7 +85,7 @@ class ChatRequest(BaseModel):
 async def chat(request: ChatRequest):
     from app.workflow.agents import get_llm
     import json
-    llm = get_llm(model="qwen-plus", temperature=0.5)
+    llm = get_llm(model="qwen-plus", temperature=0.5)  # 聊天保持质量
     script_str = json.dumps(request.script, ensure_ascii=False, indent=2)
     prompt = f"""你是一个专业的剧本分析助手。根据以下剧本内容回答用户的问题。
 
@@ -105,13 +107,11 @@ async def relation_analysis(script: dict):
     characters = script.get("characters", [])
     char_id_to_name = {c["id"]: c["name"] for c in characters}
 
-    # 统计每个角色出场次数（来自场景）
     char_count = defaultdict(int)
     for scene in scenes:
         for cid in scene.get("characters", []):
             char_count[cid] += 1
 
-    # 确保所有角色都有节点（即使出场次数为0，也显示）
     nodes = []
     for char in characters:
         cid = char["id"]
@@ -119,11 +119,10 @@ async def relation_analysis(script: dict):
         nodes.append({
             "id": cid,
             "label": char["name"],
-            "value": max(cnt, 1),  # 确保节点有最小大小，避免不可见
+            "value": max(cnt, 1),
             "title": f"{char['name']} (出场{cnt}次)"
         })
 
-    # 统计共现次数
     co_occurrence = defaultdict(Counter)
     for scene in scenes:
         scene_chars = scene.get("characters", [])
@@ -133,11 +132,10 @@ async def relation_analysis(script: dict):
                     co_occurrence[c1][c2] += 1
                     co_occurrence[c2][c1] += 1
 
-    # 构建边
     edges = []
     for c1, counters in co_occurrence.items():
         for c2, weight in counters.items():
-            if c1 < c2:  # 避免重复
+            if c1 < c2:
                 edges.append({
                     "from": c1,
                     "to": c2,
@@ -233,7 +231,6 @@ async def export_all(script: dict):
 
 # ========== 长文本分段处理 ==========
 def split_into_chapters(text: str) -> list:
-    """按中文章节标题切分文本，返回章节列表"""
     pattern = r'^(第[一二三四五六七八九十百千万0-9]+[章节])'
     lines = text.split('\n')
     chapters = []
@@ -267,15 +264,13 @@ async def convert_long(request: ConvertRequest):
     for idx, chapter_text in enumerate(chapters):
         print(f"处理第 {idx + 1}/{len(chapters)} 片段...")
         temp_title = f"{request.title}_part{idx + 1}"
-        script = await convert_novel(chapter_text, temp_title, request.style)
+        script = await convert_novel(chapter_text, temp_title, request.style, request.model)
 
-        # 合并角色（去重，以第一次出现为准）
         for char in script.get("characters", []):
             char_id = char["id"]
             if char_id not in merged_characters:
                 merged_characters[char_id] = char
 
-        # 合并场景（重新编号）
         base_scene_id = len(merged_scenes) + 1
         for scene in script.get("scenes", []):
             new_id = f"S{base_scene_id:03d}"
