@@ -14,6 +14,9 @@ const styleSelect = document.getElementById('styleSelect');
 const loadingIcon = document.getElementById('loadingIcon');
 const convertText = document.getElementById('convertText');
 const speedSelect = document.getElementById('speedSelect');
+const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+const scorePanel = document.getElementById('scorePanel');
+const scoreValue = document.getElementById('scoreValue');
 
 const tabScenesBtn = document.getElementById('tabScenesBtn');
 const tabCharactersBtn = document.getElementById('tabCharactersBtn');
@@ -94,7 +97,54 @@ function enableExportButtons() {
     if (exportAllBtn) exportAllBtn.disabled = false;
 }
 
-// ========== 渲染函数 ==========
+// ========== 自动保存与加载 ==========
+function saveToLocalStorage(scriptData) {
+    try {
+        localStorage.setItem('lastScript', JSON.stringify(scriptData));
+    } catch(e) { console.warn('保存失败', e); }
+}
+
+function loadFromLocalStorage() {
+    const saved = localStorage.getItem('lastScript');
+    if (saved) {
+        try {
+            const scriptData = JSON.parse(saved);
+            currentScriptData = scriptData;
+            displayYaml(scriptData);
+            renderScenes(scriptData);
+            renderCharacters(scriptData);
+            renderStats(scriptData);
+            enableExportButtons();
+            loadRelationGraph(scriptData);
+            loadScriptAnalysis(scriptData);
+            setStatus('已加载上次剧本');
+            if (chatInput) chatInput.disabled = false;
+            if (sendChatBtn) sendChatBtn.disabled = false;
+        } catch(e) { console.warn('加载失败', e); }
+    }
+}
+
+function clearLocalHistory() {
+    localStorage.removeItem('lastScript');
+    setStatus('历史已清除', false);
+    // 可选：清空界面
+    currentScriptData = null;
+    yamlOutput.innerHTML = '<code class="language-yaml">等待转换...</code>';
+    scenesContainer.innerHTML = '';
+    charactersContainer.innerHTML = '';
+    if (statsPanel) statsPanel.classList.add('hidden');
+    if (scorePanel) scorePanel.classList.add('hidden');
+    if (analysisContent) analysisContent.innerHTML = '';
+    if (relationContainer) relationContainer.innerHTML = '<div id="network"></div>';
+    if (chatInput) chatInput.disabled = true;
+    if (sendChatBtn) sendChatBtn.disabled = true;
+}
+
+if (clearHistoryBtn) {
+    clearHistoryBtn.addEventListener('click', clearLocalHistory);
+}
+
+// ========== 渲染函数（略，保持不变，但需确保它们存在） ==========
 function renderScenes(scriptData) {
     const scenes = scriptData.scenes || [];
     if (scenes.length === 0) {
@@ -243,7 +293,7 @@ function drawNetwork(data) {
     });
 }
 
-// ========== 剧本解析总结 ==========
+// ========== 剧本解析总结（含评分显示） ==========
 async function loadScriptAnalysis(scriptData) {
     if (!analysisContent) return;
     analysisContent.innerHTML = '<div class="text-gray-400">正在分析剧本...</div>';
@@ -256,6 +306,13 @@ async function loadScriptAnalysis(scriptData) {
         if (!response.ok) throw new Error('分析失败');
         const data = await response.json();
         renderAnalysis(data);
+        // 显示评分
+        if (data.score && scorePanel && scoreValue) {
+            scorePanel.classList.remove('hidden');
+            scoreValue.innerText = data.score;
+        } else {
+            if (scorePanel) scorePanel.classList.add('hidden');
+        }
     } catch (err) {
         analysisContent.innerHTML = `<div class="text-red-400">分析失败: ${err.message}</div>`;
     }
@@ -380,7 +437,7 @@ modeRadios.forEach(radio => {
     });
 });
 
-// ========== 转换主函数（含速度选择） ==========
+// ========== 转换主函数 ==========
 const progressSteps = [
     "📖 正在解析小说章节...",
     "👥 正在提取角色信息...",
@@ -394,7 +451,6 @@ async function convertNovel(text, title, style) {
     const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || 'short';
     const THRESHOLD = 10000;
 
-    // 短文本模式但字数超长 -> 弹出确认框
     if (selectedMode === 'short' && chineseChars > THRESHOLD) {
         const ok = confirm(`当前文本中文字符数约 ${chineseChars} 字，超过短文本模式建议范围（${THRESHOLD}字以内）。\n短文本模式将只处理开头部分，可能丢失后续情节。是否继续？`);
         if (!ok) {
@@ -403,7 +459,6 @@ async function convertNovel(text, title, style) {
         }
     }
 
-    // 长文本模式但字数过短 -> 自动切换为短文本模式（静默）
     let actualMode = selectedMode;
     if (selectedMode === 'long' && chineseChars <= THRESHOLD) {
         actualMode = 'short';
@@ -441,6 +496,7 @@ async function convertNovel(text, title, style) {
         enableExportButtons();
         loadRelationGraph(scriptData);
         loadScriptAnalysis(scriptData);
+        saveToLocalStorage(scriptData);  // 自动保存
         if (progressInterval) clearInterval(progressInterval);
         setStatus('转换成功');
         if (chatInput) chatInput.disabled = false;
@@ -457,7 +513,6 @@ async function convertNovel(text, title, style) {
     }
 }
 
-// ========== 文件处理 ==========
 function readFile(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -479,7 +534,7 @@ async function onFileSelected(file) {
     await convertNovel(content, title, styleSelect ? styleSelect.value : 'realistic');
 }
 
-// ========== 事件绑定 ==========
+// 事件绑定
 if (dropZone) {
     dropZone.addEventListener('click', () => fileInput.click());
     dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-purple-500'); });
@@ -555,7 +610,7 @@ if (exportAllBtn) {
 if (sendChatBtn) sendChatBtn.addEventListener('click', sendQuestion);
 if (chatInput) chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendQuestion(); });
 
-// ========== 选项卡切换 ==========
+// 选项卡切换
 function updateTabActive(activeBtn) {
     const btns = [tabScenesBtn, tabCharactersBtn, tabYamlBtn, tabRelationBtn, tabAnalysisBtn];
     btns.forEach(btn => {
@@ -622,7 +677,8 @@ if (tabAnalysisBtn) {
     });
 }
 
-// 初始化
+// 初始化：尝试加载本地历史
+loadFromLocalStorage();
 if (typeof hljs !== 'undefined') hljs.highlightAll();
 if (yamlContainer) yamlContainer.classList.remove('hidden');
 if (scenesContainer) scenesContainer.classList.add('hidden');
