@@ -29,7 +29,7 @@ app.add_middleware(
 class ConvertRequest(BaseModel):
     text: str
     title: str
-    model: Optional[str] = "qwen-turbo"  # 默认快速模型
+    model: Optional[str] = "qwen-turbo"
     style: Optional[str] = "realistic"
 
 
@@ -85,7 +85,7 @@ class ChatRequest(BaseModel):
 async def chat(request: ChatRequest):
     from app.workflow.agents import get_llm
     import json
-    llm = get_llm(model="qwen-plus", temperature=0.5)  # 聊天保持质量
+    llm = get_llm(model="qwen-plus", temperature=0.5)
     script_str = json.dumps(request.script, ensure_ascii=False, indent=2)
     prompt = f"""你是一个专业的剧本分析助手。根据以下剧本内容回答用户的问题。
 
@@ -100,29 +100,30 @@ async def chat(request: ChatRequest):
     return {"answer": response.content}
 
 
-# ========== 角色关系分析（修复节点遗漏） ==========
+# ========== 角色关系分析（优化版：更强模型+丰富上下文） ==========
 @app.post("/api/analysis/relation")
 async def relation_analysis(script: dict):
+    from app.workflow.agents import get_llm
+    from collections import defaultdict, Counter
     scenes = script.get("scenes", [])
     characters = script.get("characters", [])
     char_id_to_name = {c["id"]: c["name"] for c in characters}
 
+    # 统计出场次数
     char_count = defaultdict(int)
     for scene in scenes:
         for cid in scene.get("characters", []):
             char_count[cid] += 1
-
     nodes = []
-    for char in characters:
-        cid = char["id"]
-        cnt = char_count.get(cid, 0)
+    for cid, cnt in char_count.items():
         nodes.append({
             "id": cid,
-            "label": char["name"],
+            "label": char_id_to_name.get(cid, cid),
             "value": max(cnt, 1),
-            "title": f"{char['name']} (出场{cnt}次)"
+            "title": f"{char_id_to_name.get(cid, cid)} (出场{cnt}次)"
         })
 
+    # 统计共现次数
     co_occurrence = defaultdict(Counter)
     for scene in scenes:
         scene_chars = scene.get("characters", [])
@@ -132,16 +133,55 @@ async def relation_analysis(script: dict):
                     co_occurrence[c1][c2] += 1
                     co_occurrence[c2][c1] += 1
 
+    # 准备更丰富的上下文
+    char_descriptions = "\n".join(
+        [f"{c['name']} ({c['role_type']}): {c.get('personality', '')[:80]}" for c in characters])
+    summary = script.get("summary", {})
+    logline = summary.get("logline", "")
+    sample_scenes = []
+    for scene in scenes[:3]:
+        setting = scene.get("setting", {})
+        sample_scenes.append(
+            f"场景：{scene.get('title')}，地点：{setting.get('location')}，氛围：{setting.get('atmosphere')}")
+    sample_context = "\n".join(sample_scenes)
+
+    llm = get_llm(model="qwen-plus", temperature=0.2)
+    relation_cache = {}
     edges = []
     for c1, counters in co_occurrence.items():
         for c2, weight in counters.items():
             if c1 < c2:
-                edges.append({
+                key = f"{c1}|{c2}"
+                if key not in relation_cache:
+                    name1 = char_id_to_name.get(c1, c1)
+                    name2 = char_id_to_name.get(c2, c2)
+                    prompt = f"""你是一个故事分析专家。根据以下信息判断角色"{name1}"和"{name2}"之间的关系。
+角色简介：
+{char_descriptions}
+
+故事梗概：{logline}
+
+部分场景示例：
+{sample_context}
+
+请只输出最合适的一个关系词（例如：恋人、夫妻、同事、朋友、敌对、母子、父女、师徒、主仆、竞争对手、陌生、无直接关系等）。只输出词语，不要解释。"""
+                    try:
+                        resp = llm.invoke(prompt)
+                        label = resp.content.strip().split('\n')[0][:20]
+                        if len(label) > 15:
+                            label = label[:15]
+                        relation_cache[key] = label
+                    except Exception as e:
+                        print(f"关系推断失败: {e}")
+                        relation_cache[key] = "关联"
+                edge = {
                     "from": c1,
                     "to": c2,
                     "value": weight,
-                    "title": f"共同出场 {weight} 次"
-                })
+                    "title": f"共同出场 {weight} 次",
+                    "label": relation_cache[key]
+                }
+                edges.append(edge)
     return {"nodes": nodes, "edges": edges}
 
 
@@ -231,6 +271,7 @@ async def export_all(script: dict):
 
 # ========== 长文本分段处理 ==========
 def split_into_chapters(text: str) -> list:
+    """按中文章节标题切分文本，返回章节列表"""
     pattern = r'^(第[一二三四五六七八九十百千万0-9]+[章节])'
     lines = text.split('\n')
     chapters = []

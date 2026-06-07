@@ -4,12 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI 小说转剧本工具 | 七牛云实训营</title>
+    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- highlight.js -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
+    <!-- js-yaml -->
     <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
+    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- vis-network -->
     <script src="https://unpkg.com/vis-network@9.1.2/dist/vis-network.min.js"></script>
     <style>
         ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -17,7 +22,20 @@
         ::-webkit-scrollbar-thumb { background: #52525b; border-radius: 3px; }
         body { background: #0f0f1a; }
         .highlight pre { margin: 0; border-radius: 0.5rem; }
+        .transition-all { transition: all 0.2s ease; }
         #network { height: 400px; width: 100%; background: #0f0f1a; border-radius: 0.5rem; }
+        .history-dropdown {
+            position: absolute;
+            right: 0;
+            top: 100%;
+            margin-top: 0.5rem;
+            width: 280px;
+            background: #1f2937;
+            border-radius: 0.5rem;
+            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5);
+            border: 1px solid #374151;
+            z-index: 20;
+        }
     </style>
 </head>
 <body class="text-gray-200">
@@ -27,7 +45,7 @@
             <p class="text-gray-400 mt-2">上传3章以上小说，一键生成专业剧本（YAML）</p>
         </div>
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <!-- 左侧输入区 -->
+            <!-- 左侧输入区（保持不变） -->
             <div class="bg-gray-900/60 backdrop-blur-sm rounded-2xl p-6 border border-gray-800 shadow-xl">
                 <!-- 剧本风格 -->
                 <div class="mb-6">
@@ -39,14 +57,13 @@
                     </select>
                 </div>
 
-                <!-- 速度选择 -->
+                <!-- 生成速度 -->
                 <div class="mb-6">
                     <label class="block text-sm font-medium mb-2">⚡ 生成速度</label>
                     <select id="speedSelect" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-purple-500">
                         <option value="qwen-turbo">快速模式（推荐，几秒出结果）</option>
                         <option value="qwen-plus">高质量模式（较慢，但剧本更精致）</option>
                     </select>
-                    <p class="text-xs text-gray-400 mt-1">快速模式使用 turbo 模型，速度提升2-3倍；高质量模式使用 plus 模型，质量更优但耗时较长。</p>
                 </div>
 
                 <!-- 处理模式选择 -->
@@ -58,17 +75,11 @@
                     <div class="flex flex-wrap gap-6">
                         <label class="inline-flex items-center cursor-pointer">
                             <input type="radio" name="mode" value="short" checked class="form-radio text-purple-600 w-4 h-4">
-                            <span class="ml-2 text-sm">
-                                <span class="font-medium">短文本模式</span>
-                                <span class="text-gray-400 text-xs block">适合 ≤10000 字的小说，一次性生成，速度快</span>
-                            </span>
+                            <span class="ml-2 text-sm"><span class="font-medium">短文本模式</span><span class="text-gray-400 text-xs block">适合 ≤10000 字，一次性生成</span></span>
                         </label>
                         <label class="inline-flex items-center cursor-pointer">
                             <input type="radio" name="mode" value="long" class="form-radio text-purple-600 w-4 h-4">
-                            <span class="ml-2 text-sm">
-                                <span class="font-medium">长文本模式</span>
-                                <span class="text-gray-400 text-xs block">适合 >10000 字的长篇小说，自动分段处理并合并</span>
-                            </span>
+                            <span class="ml-2 text-sm"><span class="font-medium">长文本模式</span><span class="text-gray-400 text-xs block">适合 >10000 字，自动分段合并</span></span>
                         </label>
                     </div>
                     <div id="activeModeIndicator" class="mt-3 p-2 bg-gray-800 rounded-lg text-sm flex items-center gap-2">
@@ -76,19 +87,14 @@
                         <span id="activeModeText" class="font-bold text-purple-300">短文本模式</span>
                         <span id="activeModeReason" class="text-xs text-gray-500"></span>
                     </div>
-                    <div class="text-xs text-gray-400 mt-3 flex items-center gap-1">
-                        <span>💡</span> 根据文本统计中的中文字符数，系统会自动推荐模式，你也可以手动切换。
-                    </div>
                 </div>
 
                 <!-- 字数统计 -->
                 <div class="mb-6">
                     <label class="block text-sm font-medium mb-2">📊 文本统计</label>
                     <div class="bg-gray-800 rounded-xl px-4 py-2">
-                        <span id="charCount" class="text-purple-300 font-mono">0</span>
-                        <span class="text-gray-400"> 字符（不含空格）</span>
-                        <span id="wordCount" class="ml-4 text-purple-300 font-mono">0</span>
-                        <span class="text-gray-400"> 中文字符数</span>
+                        <span id="charCount" class="text-purple-300 font-mono">0</span><span class="text-gray-400"> 字符（不含空格）</span>
+                        <span id="wordCount" class="ml-4 text-purple-300 font-mono">0</span><span class="text-gray-400"> 中文字符数</span>
                     </div>
                     <div id="modeHint" class="text-xs mt-2"></div>
                 </div>
@@ -119,7 +125,7 @@
             </div>
 
             <!-- 右侧输出区 -->
-            <div class="bg-gray-900/60 backdrop-blur-sm rounded-2xl p-6 border border-gray-800 shadow-xl">
+            <div class="bg-gray-900/60 backdrop-blur-sm rounded-2xl p-6 border border-gray-800 shadow-xl relative">
                 <div class="flex justify-between items-center mb-4 flex-wrap">
                     <div class="flex gap-2 flex-wrap">
                         <button id="tabScenesBtn" class="px-3 py-1 text-sm border-b-2 border-transparent hover:text-purple-400 transition">🎬 场景信息</button>
@@ -128,11 +134,22 @@
                         <button id="tabRelationBtn" class="px-3 py-1 text-sm border-b-2 border-transparent hover:text-purple-400 transition">🔗 角色关系</button>
                         <button id="tabAnalysisBtn" class="px-3 py-1 text-sm border-b-2 border-transparent hover:text-purple-400 transition">📊 剧本解析</button>
                     </div>
-                    <div class="flex gap-2 mt-2 sm:mt-0">
+                    <div class="flex gap-2 mt-2 sm:mt-0 relative">
                         <button id="copyBtn" disabled class="px-3 py-1 bg-gray-700 rounded-lg text-sm disabled:opacity-50">📋 复制</button>
                         <button id="exportYamlBtn" disabled class="px-3 py-1 bg-gray-700 rounded-lg text-sm disabled:opacity-50">💾 导出YAML</button>
                         <button id="exportJsonBtn" disabled class="px-3 py-1 bg-gray-700 rounded-lg text-sm disabled:opacity-50">📄 导出JSON</button>
                         <button id="exportAllBtn" disabled class="px-3 py-1 bg-gray-700 rounded-lg text-sm disabled:opacity-50">📦 打包下载</button>
+                        <button id="historyBtn" class="px-3 py-1 bg-gray-700 rounded-lg text-sm">📜 历史</button>
+                        <!-- 历史版本下拉面板 -->
+                        <div id="historyDropdown" class="hidden history-dropdown">
+                            <div class="p-2 border-b border-gray-700 font-medium text-sm">历史剧本</div>
+                            <div id="historyList" class="max-h-64 overflow-y-auto">
+                                <div class="p-2 text-gray-400 text-sm">暂无历史</div>
+                            </div>
+                            <div class="p-2 text-right border-t border-gray-700">
+                                <button id="clearAllHistoryBtn" class="text-xs text-red-400 hover:text-red-300">清空所有</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -154,9 +171,13 @@
                     <div id="statsText" class="text-xs text-gray-400 mt-2 text-center"></div>
                 </div>
 
+                <!-- AI 问答窗口 -->
                 <div class="mt-6 bg-gray-800 rounded-xl p-4">
-                    <h3 class="text-md font-medium mb-2">🤖 剧本助手</h3>
-                    <div id="chatHistory" class="h-32 overflow-y-auto text-sm text-gray-300 mb-2 border border-gray-700 rounded-lg p-2"></div>
+                    <div class="flex justify-between items-center mb-2">
+                        <h3 class="text-md font-medium">🤖 剧本助手</h3>
+                        <button id="newChatBtn" class="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded">新对话</button>
+                    </div>
+                    <div id="chatHistoryDiv" class="h-32 overflow-y-auto text-sm text-gray-300 mb-2 border border-gray-700 rounded-lg p-2"></div>
                     <div class="flex gap-2">
                         <input type="text" id="chatInput" class="flex-1 bg-gray-700 rounded-lg px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-purple-500" placeholder="问一个关于剧本的问题..." disabled>
                         <button id="sendChatBtn" class="bg-purple-600 px-3 py-1 rounded-lg text-sm disabled:opacity-50" disabled>发送</button>
